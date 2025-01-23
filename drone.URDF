@@ -1,0 +1,112 @@
+<?xml version="1.0" ?>
+<robot name="drone_with_legs">
+  <!-- Main drone body -->
+  <link name="base_link">
+    <inertial>
+      <mass value="1.0" />
+      <origin xyz="0 0 0" />
+      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01" />
+    </inertial>
+    <visual>
+      <geometry>
+        <sphere radius="0.2" />
+      </geometry>
+      <material name="grey">
+        <color rgba="0.5 0.5 0.5 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <sphere radius="0.2" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Leg 1 -->
+  <joint name="leg_1_joint" type="fixed">
+    <origin xyz="0.2 0.2 -0.2" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="leg_1" />
+  </joint>
+  <link name="leg_1">
+    <visual>
+      <geometry>
+        <cylinder radius="0.02" length="0.4" />
+      </geometry>
+      <material name="black">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.02" length="0.4" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Leg 2 -->
+  <joint name="leg_2_joint" type="fixed">
+    <origin xyz="-0.2 0.2 -0.2" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="leg_2" />
+  </joint>
+  <link name="leg_2">
+    <visual>
+      <geometry>
+        <cylinder radius="0.02" length="0.4" />
+      </geometry>
+      <material name="black">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.02" length="0.4" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Leg 3 -->
+  <joint name="leg_3_joint" type="fixed">
+    <origin xyz="0.2 -0.2 -0.2" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="leg_3" />
+  </joint>
+  <link name="leg_3">
+    <visual>
+      <geometry>
+        <cylinder radius="0.02" length="0.4" />
+      </geometry>
+      <material name="black">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.02" length="0.4" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Leg 4 -->
+  <joint name="leg_4_joint" type="fixed">
+    <origin xyz="-0.2 -0.2 -0.2" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="leg_4" />
+  </joint>
+  <link name="leg_4">
+    <visual>
+      <geometry>
+        <cylinder radius="0.02" length="0.4" />
+      </geometry>
+      <material name="black">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.02" length="0.4" />
+      </geometry>
+    </collision>
+  </link>
+</robot>

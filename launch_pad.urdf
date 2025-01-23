@@ -1,0 +1,23 @@
+<?xml version="1.0" ?>
+<robot name="launch_pad.urdf">
+  <link name="base_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="10"/> <!-- Approximate mass for a wooden launch pad -->
+      <inertia ixx="1.67" ixy="0" ixz="0" iyy="1.67" iyz="0" izz="0.34"/> <!-- Inertia for a rectangular box -->
+    </inertial>
+    <visual>
+      <geometry>
+        <box size="2 2 0.2"/> <!-- 2x2 meters, 0.2 meters thick -->
+      </geometry>
+      <material name="grey">
+        <color rgba="0.5 0.5 0.5 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="2 2 0.1"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>
