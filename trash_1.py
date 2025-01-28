@@ -73,9 +73,13 @@ def parse_args():
         default = "DIRECT",
         help = 'visual mode of the environment GUI or DIRECT',
     )
+    parser.add_argument(
+        '--discount_factor',
+        type = float,
+        default = 0.99,
+        help = 'Discount factor (gamma) for the RL algorithm',
+    )
     
-
-
 
     return parser.parse_args()
 
@@ -84,188 +88,178 @@ args = parse_args()
 class DroneLandingEnv(gym.Env):
     def __init__(self):
         super(DroneLandingEnv, self).__init__()
-        
+
         if args.visual_mode.upper() == "GUI":
-            # for  debussing and better visualization, use GUI mode
             p.connect(p.GUI)
         else:
-            # for faster training, use DIRECT mode
             p.connect(p.DIRECT)
-        # p.connect(p.GUI)
+
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
-        # p.setGravity(0, 0, args.gravity)
-        # p.loadURDF("plane.urdf")
-        # p.loadURDF("launch_pad.urdf", args.launch_pad_position, globalScaling=1.0, useFixedBase=True)
+
         self.plane = None
         self.launch_pad = None
         self.launch_pad_position = args.launch_pad_position
         self.boundary_limits = args.boundary_limits
-        self.drone = None
         self.distance_reward_weight = args.distance_reward_weight
         self.leg_contact_reward = args.leg_contact_reward
         self.landed = False
         self.crashed = False
+        self.drone = None
+        self.alpha = 0.1  # Hyperparameter for az
+        self.c = 0  # Hyperparameter indicating landing state bonus
+        self.step_counter = 0  # Step counter for termination condition
+        self.max_steps = 10000  # Maximum steps per episode
 
-
-        # action space
+        # Define action space (ax, ay)
         self.action_space = Box(
-            low=np.array([-3, -3, -10]), 
-            high=np.array([3, 3, 10]), 
-            dtype=np.float32
+            low=-1.0, high=1.0, shape=(2,), dtype=np.float32
         )
 
-        # observation space
+        # Define observation space (position, velocity)
         self.observation_space = Box(
-    low=np.array([-self.boundary_limits, -self.boundary_limits, 0, -1, -1, -1, -10, -10, -10, -10, -10, -10, -10]),
-    high=np.array([self.boundary_limits, self.boundary_limits, 20, 1, 1, 1, 10, 10, 10, 10, 10, 10, 10]),
-    dtype=np.float32
-)
-
+            low=-np.inf, high=np.inf, shape=(6,), dtype=np.float32
+        )
 
     def reset(self, seed=None):
-        # seed for reproducibility
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
 
-        # reset the environment
         p.resetSimulation()
-        p.setGravity(0, 0, -9.8)
-        self.plane = p.loadURDF("plane.urdf") 
-        # globalScaling is a parameter that scales the size of the object in the environment
-        self.launch_pad = p.loadURDF("launch_pad.urdf", self.launch_pad_position, globalScaling=1.0, useFixedBase=True)
+        p.setGravity(0, 0, args.gravity)
+        self.plane = p.loadURDF("plane.urdf")
+        self.launch_pad = p.loadURDF(
+            "launch_pad.urdf", self.launch_pad_position, globalScaling=1.0, useFixedBase=True
+        )
         self.drone = self.load_drone()
         self.landed = False
         self.crashed = False
+        self.c = 0  # Reset the bonus parameter
+        self.step_counter = 0
 
         return self.get_observation(), {}
 
     def load_drone(self):
         start_x = random.uniform(-15, 15)
         start_y = random.uniform(-15, 15)
-        start_z = random.uniform(5, 15)
+        start_z = random.uniform(5, 15) 
         drone = p.loadURDF("cf2x.urdf", [start_x, start_y, start_z])
-        return drone 
-    
+        return drone
+
     def get_observation(self):
-        drone_position, drone_orientation = p.getBasePositionAndOrientation(self.drone)
-        drone_linear_velocity, drone_angular_velocity = p.getBaseVelocity(self.drone)
-        drone_yaw, drone_pitch, drone_roll = p.getEulerFromQuaternion(drone_orientation)
+        drone_position, _ = p.getBasePositionAndOrientation(self.drone)
+        drone_linear_velocity, _ = p.getBaseVelocity(self.drone)
 
-        return np.array([*drone_position, *drone_orientation, *drone_linear_velocity, *drone_angular_velocity])
-    
-    def compute_reward(self, observation):
-        reward = 0
-        drone_position = observation[:3]
-        drone_orientation = observation[3:7]
-        drone_linear_velocity = observation[7:10]
-        drone_angular_velocity = observation[10:]
+        return np.array([
+            *drone_position,
+            *drone_linear_velocity,
+        ])
 
-        drone_distance_from_launch_pad = np.linalg.norm(np.array(drone_position) - np.array(self.launch_pad_position))
+    def compute_reward(self, observation, action):
+        px, py, pz = observation[0:3]  # Position
+        vx, vy, vz = observation[3:6]  # Linear velocity
+        ax, ay = action[0], action[1]  # Actions from the agent
 
-        epsilon = 0.1
-        c = 10 
-        raw_dist_reward = c / (drone_distance_from_launch_pad + epsilon)
-        dist_reward = min(raw_dist_reward, 10.0) # clip the reward to 10.0 to aviod large rewards when the drone is close to the pad to stop it from being hovering 
-        reward += self.distance_reward_weight * dist_reward
+        # Compute shaping reward
+        shaping = (
+            -100 * np.sqrt(px**2 + py**2 + pz**2)  # Distance penalty
+            - 10 * np.sqrt(vx**2 + vy**2 + vz**2)  # Velocity penalty
+        )
 
-        # Reward for reducing altitude (but not going below pad level):
-        desired_pad_altitude = 0.1  # ~ top of pad
-        altitude = drone_position[2]
-        if altitude > desired_pad_altitude:
-            # A small negative penalty that grows with altitude
-            # to encourage descending
-            reward -= 0.01 * (altitude - desired_pad_altitude)
+        # Check if drone has landed safely
+        contact_points = p.getContactPoints(self.drone, self.launch_pad)
+        if contact_points and abs(vz)  < 0.1 and abs(vy) < 0.1 and abs(vz) < 0.1:
+            self.c = 10 * (1 - abs(ax)) + 10 * (1 - abs(ay))  # Bonus for throttle tending to zero
+            shaping +=  self.c
+            self.landed = True
 
+        # Reward difference (temporal difference shaping)
+        if hasattr(self, 'previous_shaping'):
+            reward = shaping - self.previous_shaping
+        else:
+            reward = shaping
 
-
-        # penalize the drone for flying out of boundary limits
-        if abs(observation[0]) > self.boundary_limits or abs(observation[1]) > self.boundary_limits or observation[2] > self.boundary_limits:
-            reward -= 50
-            self.crashed = True
-            print("Drone flew out of boundary limits")
-
-
-        contact_with_pad = p.getContactPoints(self.drone, self.launch_pad)
-        if contact_with_pad:
-            # loop thorugh each contact point 
-            for c in contact_with_pad:
-                penetration_depth = c[8]
-                if penetration_depth < 0:
-                    # The drone is penetrating the pad
-                    print("Drone is penetrating the pad!")
-                    reward -= 10  # penalty
-                    self.crashed = True
-                else:
-                    # The drone is just in stable contact with the pad
-                    print("Drone made stable contact (landed) on the pad!")
-                    reward += self.leg_contact_reward
-                    self.landed = True
-           
-
-        contact_with_ground = p.getContactPoints(self.drone, self.plane)
-        if contact_with_ground:
-            # This means the drone definitely touched the plane.
-            # consider *any* contact with the plane as a crash, do:
-            reward -= 5
-            self.crashed = True
-
-        
-
+        self.previous_shaping = shaping
         return reward
-    
+
     def step(self, action):
         action = np.clip(action, self.action_space.low, self.action_space.high)
-        # print(action)
-        p.applyExternalForce(self.drone, -1, action, [0, 0, 0], p.WORLD_FRAME)
+        self.step_counter += 1
 
-        drone_position, drone_orientation = p.getBasePositionAndOrientation(self.drone)
+        # Desired velocities (ax, ay)
+        ax = action[0]
+        ay = action[1]
+
+        # Compute az based on altitude
+        drone_position, _ = p.getBasePositionAndOrientation(self.drone)
+        az = -self.alpha * drone_position[2]  # Vertical velocity (smooth descent)
+
+        roll, pitch = np.arcsin(ax), np.arcsin(ay)
+
+        p.resetBasePositionAndOrientation(
+            self.drone,
+            drone_position,
+            p.getQuaternionFromEuler([roll, pitch, 0])
+        )
+
+
+         # Simulate forward motion based on ax, ay
+        velocity_x = ax
+        velocity_y = ay
+        velocity_z = az
+
+        # Apply the velocities
+        p.resetBaseVelocity(
+            self.drone,
+            linearVelocity=[velocity_x, velocity_y, velocity_z]
+        )
+
         p.resetDebugVisualizerCamera(cameraDistance=3, cameraYaw=45, cameraPitch=-45,cameraTargetPosition=drone_position)
-
         p.stepSimulation()
-
         if args.visual_mode.upper() == "GUI":
-            time.sleep(1./240.)
-        # time.sleep(1./240.)
-        
+            time.sleep(1.0 / 240.0)
 
         observation = self.get_observation()
-        reward = self.compute_reward(observation)
-        terminated = self.is_done(observation) or getattr(self, "landed", False) or getattr(self, "crashed", False)
-        truncated = False 
+        reward = self.compute_reward(observation, action)
+        terminated = (
+            self.is_done(observation) or self.step_counter >= self.max_steps or getattr(self, "crashed", False)
+        )
+        truncated = False
 
         return observation, reward, terminated, truncated, {}
 
     def is_done(self, observation):
+        px, py, pz = observation[0:3]
+
         if self.landed or self.crashed:
             return True
 
         contact_with_ground = p.getContactPoints(self.drone, self.plane)
-
         if contact_with_ground:
-            return True 
-
-        if observation[2] <= 0:
+            self.crashed = True 
             return True
 
-        if abs(observation[0]) > self.boundary_limits or abs(observation[1]) > self.boundary_limits or observation[2] > self.boundary_limits:
+        if pz <= 0 or abs(px) > self.boundary_limits or abs(py) > self.boundary_limits or pz > self.boundary_limits:
+            self.crashed = True 
             return True
 
         return False
-    
+
     def close(self):
         p.disconnect()
+
 
 
 def main():
     env = Monitor(DroneLandingEnv())
     tensorboard_log_dir = args.tensorboard_log_dir
+    gamma_value = args.discount_factor
     # find the algorithm to benchmark
     algorithm_name = args.algorithm_name 
     if algorithm_name == "PPO":
-        model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=tensorboard_log_dir)
+        model = PPO("MlpPolicy", env, verbose=1, gamma = gamma_value, tensorboard_log=tensorboard_log_dir, device = "cpu")
     elif algorithm_name == "A2C":
-        model = A2C("MlpPolicy", env, verbose=1, tensorboard_log=tensorboard_log_dir)
+        model = A2C("MlpPolicy", env, verbose=1, gamma = gamma_value, tensorboard_log=tensorboard_log_dir)
     # elif algorithm_name == "TRPO":
     #     model = TRPO("MlpPolicy", env, verbose=1, tensorboard_log=tensorboard_log_dir)
     else:
@@ -275,7 +269,7 @@ def main():
                                  log_path='./logs_metrics_benchmark_tensorboard/', eval_freq=10000, verbose=1)
     
     # train the model
-    model.learn(total_timesteps=2e5, callback = eval_callback, progress_bar = True)
+    model.learn(total_timesteps=1e6, callback = eval_callback, progress_bar = True)
     model.save(f"{args.model_name_to_save}")
     
     env.close()
