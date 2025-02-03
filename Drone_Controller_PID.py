@@ -2,7 +2,6 @@ import argparse
 import os 
 import gymnasium as gym
 from gymnasium.spaces import Box, Discrete
-from gym import spaces
 import numpy as np
 import pybullet as p
 import pybullet_data
@@ -17,6 +16,10 @@ from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
 from Base_Drone_Controller import BaseDroneController
+
+import multiprocessing
+from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from DSLPIDControl import DSLPIDControl
 from enums import DroneModel
@@ -49,95 +52,78 @@ def parse_args():
 
 args = parse_args()
 
-class DroneControllerVelocity(BaseDroneController):
+class DroneControllerPID(BaseDroneController):
     def __init__(self):
-        super(DroneControllerVelocity, self).__init__(args=args)
+        super(DroneControllerPID, self).__init__(args=args)
         self.pid = DSLPIDControl(DroneModel.CF2X)
 
     def _actionSpace(self):
-        # ---- [desired_vx, desired_vy, desired_vz, desired_yaw_rate] ---- #
-        act_lower_bound = np.array([-1, -1, -1, -1], dtype=np.float32)
-        act_upper_bound = np.array([ 1,  1,  1, 1], dtype=np.float32)
+        act_lower_bound = np.array([-1, -1, -1], dtype=np.float32)
+        act_upper_bound = np.array([ 1,  1,  1], dtype=np.float32)
         self.action_space = Box(low=act_lower_bound, high=act_upper_bound, dtype=np.float32)
         return self.action_space
     
     def _observationSpace(self):
         # ---- [x, y, z, vx, vy, vz, roll, pitch, yaw, wx, wy, wz] ---- #
-        obs_dim = 12
-        high = np.array([np.finfo(np.float32).max] * obs_dim, dtype=np.float32)
-        self.observation_space = Box(-high, high, dtype=np.float32)
+        lo = -np.inf
+        hi = np.inf
+        obs_lower_bound = np.array([lo,lo,0,lo,lo,lo,lo,lo,lo,lo,lo,lo])
+        obs_upper_bound = np.array([hi,hi,hi,hi,hi,hi,hi,hi,hi,hi,hi,hi])
+        self.observation_space = Box(low=obs_lower_bound, high=obs_upper_bound, dtype=np.float32)
         return self.observation_space
 
-    def step(self, action):
-        action = np.clip(action, self.action_space.low, self.action_space.high)
-        self.step_counter += 1
+    def _preprocessAction(self, action):
+        target = action
         
         position, orientation = p.getBasePositionAndOrientation(self.drone)
+        # rpy = p.getEulerFromQuaternion(orientation)
         linear_vel, angular_vel = p.getBaseVelocity(self.drone)
 
-        # ---- Calculate distance to launch pad ---- #
-        distance_to_pad_xy = np.linalg.norm(self.target_pos - np.array(position))
-        # force_limit = self.MASS * -self.gravity * self.THRUST2WEIGHT_RATIO
-        # v_max = math.sqrt(force_limit / self.KF)
-        # speed_scale = min(distance_to_pad_xy, v_max)
-
-        # Drone drops in Z axis immediately
-        # Before attempting to fly in XY to launch pad.
-        # Testing safe altitude here
-        if distance_to_pad_xy > 2.0:
-            safe_altitude = 2.0
-            test_target_pos = max(self.target_pos[2], safe_altitude)
-        else:
-            test_target_pos = self.target_pos
-
-        drone_position = np.array(position)
-        drone_linear_vel = np.array(linear_vel)
-        drone_angular_vel = np.array(angular_vel)
-        drone_orientation = np.array(orientation)
-
-        # ---- Calculate control actions based on position ---- #
-        rpm, pos_error, yaw_error = self.pid.computeControl(
-            control_timestep = self.time_step,
-            cur_pos = drone_position,
-            cur_quat = drone_orientation,
-            cur_vel = drone_linear_vel,
-            cur_ang_vel = drone_angular_vel,
-            target_pos = test_target_pos,
+        next_pos = self._calculateNextStep(
+            current_position=position,
+            destination=target,
+            step_size=1
         )
-        #print(f"RPM: {rpm}, Position Error: {pos_error}, Yaw Error: {yaw_error}")
 
-        # ---- Convert RPM to force and torque ---- #
+        rpm, _, _ = self.pid.computeControl(
+            control_timestep=self.time_step,
+            cur_pos=position,
+            cur_quat=orientation,
+            cur_vel=linear_vel,
+            cur_ang_vel=angular_vel,
+            target_pos=next_pos
+        )
+
+        return rpm
+
+    def step(self, action):
+        # action = np.clip(action, self.action_space.low, self.action_space.high)
+
+        position, orientation = p.getBasePositionAndOrientation(self.drone)
+        rpm = np.reshape(self._preprocessAction(action), 4)
+
         forces = np.array(rpm**2)*self.KF
         torques = np.array(rpm**2)*self.KM
-        #print(f"Forces: {forces}, Torques: {torques}")
 
-        # ---- Calculating net yaw torque around z axis ---- #
-        # ---- My understanding is that in a standard quadcopter layout, the front
-        # ---- left and back right rotors spin clockwise, while the front right and back left spin counterclockwise.
-        # ---- Net torque around z-axis depends on the sign of each rotor's torque?
-        # ---- So summing up with alternating signs, you get the total yaw torque around the vertical axis?
         z_torque = (-torques[0] + torques[1] - torques[2] + torques[3])
 
-        # ---- Applying forces to each rotor ---- #
         for i in range(4):
             p.applyExternalForce(
-                self.drone, 
-                linkIndex=i, 
+                self.drone,
+                i,
                 forceObj=[0, 0, forces[i]],
-                # posObj=[0, 0, 0], # apply force at the center of mass
-                posObj=self.rotor_positions_local[i], # apply force at each rotor?
-                flags=p.LINK_FRAME
+                posObj=self.rotor_positions_local[i],
+                flags=p.LINK_FRAME,
             )
-        
-        # ---- Apply net torque about the z-axis ---- #
         p.applyExternalTorque(
             self.drone,
-            -1,  # Using 4 for the center of mass link in URDF
+            4,
             torqueObj=[0, 0, z_torque],
-            flags=p.LINK_FRAME
+            flags=p.LINK_FRAME,
         )
 
-        p.resetDebugVisualizerCamera(cameraDistance=3, cameraYaw=45, cameraPitch=-45,cameraTargetPosition=position)
+
+        p.resetDebugVisualizerCamera(cameraDistance=2, cameraYaw=45, cameraPitch=-45,cameraTargetPosition=position)
         p.stepSimulation()
         if args.visual_mode.upper() == "GUI":
             time.sleep(self.time_step)
@@ -149,10 +135,16 @@ class DroneControllerVelocity(BaseDroneController):
         )
         truncated = False
 
+        self.step_counter += 1
         return observation, reward, terminated, truncated, {}
 
 def main():
-    env = Monitor(DroneControllerVelocity())
+    # num_cpu = multiprocessing.cpu_count()
+    # print(f"Number of CPU cores available: {num_cpu}")
+    # env = make_vec_env(DroneControllerPID, n_envs=1, vec_env_cls=SubprocVecEnv, seed=None)
+
+    env = DroneControllerPID()
+    env = Monitor(env)
     tensorboard_log_dir = args.tensorboard_log_dir
     gamma_value = args.discount_factor
     algorithm_name = args.algorithm_name 
@@ -172,7 +164,7 @@ def main():
     )
 
     # Train the model
-    model.learn(total_timesteps=500000, callback=eval_callback, progress_bar=True)
+    model.learn(total_timesteps=1e6, callback=eval_callback, progress_bar=True)
     model.save(f"{args.model_name_to_save}")
     
     env.close()

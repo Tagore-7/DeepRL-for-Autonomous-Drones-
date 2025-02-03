@@ -17,6 +17,7 @@ from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
 from Drone_Controller_Velocity import DroneControllerVelocity
+from Drone_Controller_PID import DroneControllerPID
 
 import xml.etree.ElementTree as ET
 
@@ -60,9 +61,10 @@ def main():
     if algorithm_name == "PPO":
         # reload the model and test it 
         model = PPO.load(f"{args.model_name_to_save}")
+        # model = PPO.load("./logs_metrics_benchmark_tensorboard/best_model")
         # for testing use GUI mode
         args.visual_mode = "GUI"
-        env = DroneControllerVelocity()
+        env = DroneControllerPID()
 
         mean_reward, std_reward = evaluate_policy(model, env, n_eval_episodes=50)
         print(f"Mean Reward: {mean_reward}, Std Reward: {std_reward}")
@@ -71,7 +73,7 @@ def main():
         model = A2C.load(f"{args.model_name_to_save}")
         # for testing use GUI mode
         args.visual_mode = "GUI"
-        env = DroneControllerVelocity()
+        env = DroneControllerPID()
 
         mean_reward, std_reward = evaluate_policy(model, env, n_eval_episodes=10)
         print(f"Mean Reward: {mean_reward}, Std Reward: {std_reward}")

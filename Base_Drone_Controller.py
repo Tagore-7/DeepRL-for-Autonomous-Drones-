@@ -2,7 +2,6 @@ import argparse
 import os 
 import gymnasium as gym
 from gymnasium.spaces import Box, Discrete
-from gym import spaces
 import numpy as np
 import pybullet as p
 import pybullet_data
@@ -56,16 +55,16 @@ class BaseDroneController(gym.Env):
         #   J_INV = (Inverse inertia matrix)
         #   KF = 3.16e-10 (thrust coefficient - how rotor speed squared translates into thrust force.
         #   KM = 7.94e-12 (Torque (moment) coefficient - how rotor speed squared translates into rotor torque.
-        #   COLLISION_H =
-        #   COLLISION_R = 
+        #   COLLISION_H
+        #   COLLISION_R
         #   COLLISION_Z_OFFSET
         #   MAX_SPEED_KMH
         #   GND_EFF_COEFF = (ground effect coefficient)
         #   PROP_RADIUS =  (The physical radius of the propellers)
         #   DRAG_COEFF = [DRAG_COEFF_XY, DRAG_COEFF, XY, DRAG_COEFF_Z]
-        #   DW_COEFF_1 = 
-        #   DW_COEFF_2 =
-        #   DW_COEFF_3 = 
+        #   DW_COEFF_1
+        #   DW_COEFF_2
+        #   DW_COEFF_3
 
         # ---- Load drone properties from the .urdf file ---- #
         self.MASS, \
@@ -90,10 +89,10 @@ class BaseDroneController(gym.Env):
 
         self.G = -self.gravity * self.MASS
         self.HOVER_RPM = np.sqrt(self.G / (4*self.KF))
-        self.MAX_RPM_2 = np.sqrt((self.THRUST2WEIGHT_RATIO*self.G) / (4*self.KF))
-        self.MAX_THRUST = (4*self.KF*self.MAX_RPM_2**2)
-        self.MAX_XY_TORQUE = (2*self.ARM*self.KF*self.MAX_RPM_2**2)/np.sqrt(2)
-        self.MAX_Z_TORQUE = (2*self.KM*self.MAX_RPM_2**2)
+        self.MAX_RPM = np.sqrt((self.THRUST2WEIGHT_RATIO*self.G) / (4*self.KF))
+        self.MAX_THRUST = (4*self.KF*self.MAX_RPM**2)
+        self.MAX_XY_TORQUE = (2*self.ARM*self.KF*self.MAX_RPM**2)/np.sqrt(2)
+        self.MAX_Z_TORQUE = (2*self.KM*self.MAX_RPM**2)
 
         # ---- Action Space ---- #
         self.action_space = self._actionSpace()
@@ -104,10 +103,10 @@ class BaseDroneController(gym.Env):
         # ---- Rotor positions in URDF file ---- #
         # Should obtain directly from URDF instead
         self.rotor_positions_local = np.array([
-            [ 0.028, -0.028, 0.0],  # prop0
-            [-0.028, -0.028, 0.0],  # prop1
-            [-0.028,  0.028, 0.0],  # prop2
-            [ 0.028,  0.028, 0.0],  # prop3
+            [ 0.028, -0.028, 0.0],  # prop0 - Front left rotor
+            [-0.028, -0.028, 0.0],  # prop1 - Back left rotor
+            [-0.028,  0.028, 0.0],  # prop2 - Back right rotor
+            [ 0.028,  0.028, 0.0],  # prop3 - Front right rotor
         ])
 
     # ---- Implement in Subclasses ---- #
@@ -116,6 +115,10 @@ class BaseDroneController(gym.Env):
 
     # ---- Implement in Subclasses ---- #
     def _observationSpace(self):
+        raise NotImplementedError
+    
+    # ---- Implement in Subclasses ---- #
+    def step(self, action):
         raise NotImplementedError
 
     def reset(self, seed=None):
@@ -143,14 +146,10 @@ class BaseDroneController(gym.Env):
     def _load_drone(self):
         start_x = random.uniform(-15, 15)
         start_y = random.uniform(-15, 15)
-        start_z = random.uniform(5, 15)
+        start_z = random.uniform(5, 15) 
         drone = p.loadURDF(str(self.urdf_path), [start_x, start_y, start_z])
 
         return drone
-
-    # ---- Implement in Subclasses ---- #
-    def step(self, action):
-        raise NotImplementedError
 
     def _get_observation(self):
         position, orientation = p.getBasePositionAndOrientation(self.drone)
@@ -166,13 +165,10 @@ class BaseDroneController(gym.Env):
         return observation
 
     def _compute_reward(self, observation, action):
-        # px, py, pz = observation[0:3]  # Position
-        # vx, vy, vz = observation[3:6]  # Linear velocity
-        # ax, ay = action[0], action[1]  # Actions from the agent
-
         px, py, pz = observation[0:3]  # Position
-        drone_orientation = observation[3:7]
-        vx, vy, vz = observation[7:10]  # Linear velocity
+        vx, vy, vz = observation[3:6]  # Linear velocity
+        orientation = observation[6:9] 
+        wx, wy, wz = observation[9:12] # Angular velocity
         ax, ay = action[0], action[1]  # Actions from the agent
 
         # Compute shaping reward
@@ -187,6 +183,8 @@ class BaseDroneController(gym.Env):
             self.c = 10 * (1 - abs(ax)) + 10 * (1 - abs(ay))  # Bonus for throttle tending to zero
             shaping +=  self.c
             self.landed = True
+        elif contact_points:
+            self.crashed = True
 
         # Reward difference (temporal difference shaping)
         if hasattr(self, 'previous_shaping'):
@@ -249,4 +247,48 @@ class BaseDroneController(gym.Env):
         DW_COEFF_3 = float(URDF_TREE[0].attrib['dw_coeff_3'])
         return M, L, THRUST2WEIGHT_RATIO, J, J_INV, KF, KM, COLLISION_H, COLLISION_R, COLLISION_Z_OFFSET, MAX_SPEED_KMH, \
                 GND_EFF_COEFF, PROP_RADIUS, DRAG_COEFF, DW_COEFF_1, DW_COEFF_2, DW_COEFF_3
+    
+    def _calculateNextStep(self, current_position, destination, step_size=1):
+        """
+        Calculates intermediate waypoint
+        towards drone's destination
+        from drone's current position
+
+        Enables drones to reach distant waypoints without
+        losing control/crashing, and hover on arrival at destintion
+
+        Parameters
+        ----------
+        current_position : ndarray
+            drone's current position from state vector
+        destination : ndarray
+            drone's target position 
+        step_size: int
+            distance next waypoint is from current position, default 1
+
+        Returns
+        ----------
+        next_pos: int 
+            intermediate waypoint for drone
+
+        """
+        direction = (
+            destination - current_position
+        )  # Calculate the direction vector
+        distance = np.linalg.norm(
+            direction
+        )  # Calculate the distance to the destination
+
+        if distance <= step_size:
+            # If the remaining distance is less than or equal to the step size,
+            # return the destination
+            return destination
+
+        normalized_direction = (
+            direction / distance
+        )  # Normalize the direction vector
+        next_step = (
+            current_position + normalized_direction * step_size
+        )  # Calculate the next step
+        return next_step
     
