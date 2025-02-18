@@ -55,7 +55,7 @@ class DroneControllerVelocity(BaseDroneController):
         self.pid = DSLPIDControl(DroneModel.CF2X)
 
     def _actionSpace(self):
-        # ---- [desired_vx, desired_vy, desired_vz, desired_yaw_rate] ---- #
+        # ---- [desired_vx, desired_vy, desired_vz, desired_yaw_rate] ---- # 
         act_lower_bound = np.array([-1, -1, -1, -1], dtype=np.float32)
         act_upper_bound = np.array([ 1,  1,  1, 1], dtype=np.float32)
         self.action_space = Box(low=act_lower_bound, high=act_upper_bound, dtype=np.float32)
@@ -70,7 +70,7 @@ class DroneControllerVelocity(BaseDroneController):
 
     def step(self, action):
         action = np.clip(action, self.action_space.low, self.action_space.high)
-        self.step_counter += 1
+        
         
         position, orientation = p.getBasePositionAndOrientation(self.drone)
         linear_vel, angular_vel = p.getBaseVelocity(self.drone)
@@ -86,7 +86,9 @@ class DroneControllerVelocity(BaseDroneController):
         # Testing safe altitude here
         if distance_to_pad_xy > 2.0:
             safe_altitude = 2.0
-            test_target_pos = max(self.target_pos[2], safe_altitude)
+            test_target_pos = self.target_pos.copy()
+            # Force the z component to be at least the safe altitude:
+            test_target_pos[2] = max(self.target_pos[2], safe_altitude)
         else:
             test_target_pos = self.target_pos
 
@@ -113,10 +115,12 @@ class DroneControllerVelocity(BaseDroneController):
 
         # ---- Calculating net yaw torque around z axis ---- #
         # ---- My understanding is that in a standard quadcopter layout, the front
-        # ---- left and back right rotors spin clockwise, while the front right and back left spin counterclockwise.
+        # ---- two rotors spin clockwise, rear spin counterclockwise.
         # ---- Net torque around z-axis depends on the sign of each rotor's torque?
         # ---- So summing up with alternating signs, you get the total yaw torque around the vertical axis?
-        z_torque = (-torques[0] + torques[1] - torques[2] + torques[3])
+        z_torque = (-torques[0] + torques[1] - torques[2] + torques[3]) #  in the paper it is alpha * pz which is altitude distance 
+        # z_torque = p.getBasePositionAndOrientation(self.drone)[0][2] * 0.2 
+        # print(f"Z Torque: {z_torque}")
 
         # ---- Applying forces to each rotor ---- #
         for i in range(4):
@@ -139,6 +143,7 @@ class DroneControllerVelocity(BaseDroneController):
 
         p.resetDebugVisualizerCamera(cameraDistance=3, cameraYaw=45, cameraPitch=-45,cameraTargetPosition=position)
         p.stepSimulation()
+        self.step_counter += 1
         if args.visual_mode.upper() == "GUI":
             time.sleep(self.time_step)
 
@@ -172,7 +177,7 @@ def main():
     )
 
     # Train the model
-    model.learn(total_timesteps=500000, callback=eval_callback, progress_bar=True)
+    model.learn(total_timesteps=1e6, callback=eval_callback, progress_bar=True)
     model.save(f"{args.model_name_to_save}")
     
     env.close()

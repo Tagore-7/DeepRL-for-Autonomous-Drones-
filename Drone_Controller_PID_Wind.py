@@ -9,6 +9,7 @@ import time
 import random
 import xml.etree.ElementTree as ET
 import math
+import noise
 
 from stable_baselines3 import PPO, A2C, DDPG, TD3, SAC
 from sb3_contrib import ARS, CrossQ, TQC, TRPO
@@ -51,6 +52,12 @@ def parse_args():
                         help='Discount factor (gamma) for the RL algorithm')
     parser.add_argument('--reward_function', type = int, default= 1, 
                         help = 'Which reward function you want to use: 1 or 2 or 3')
+    parser.add_argument('--enable_wind', type=bool, default=True,
+                        help='Determines if there will be wind effects applied to the drone')
+    parser.add_argument('--add_obstacles', type=bool, default=True,
+                        help='Determines if there will obstacles')
+    parser.add_argument('--debug_axes', type=bool, default=False,
+                        help='Draws visual lines for drone axes for debugging')
     return parser.parse_args()
 
 args = parse_args()
@@ -59,11 +66,13 @@ class DroneControllerPID(BaseDroneController):
     def __init__(self):
         super(DroneControllerPID, self).__init__(args=args)
         self.pid = DSLPIDControl(DroneModel.CF2X)
+        self.enable_wind: bool = self.args.enable_wind
+        self.reward_function = self.args.reward_function
 
     def _actionSpace(self):  # ax, ay, az
         act_lower_bound = np.array([-1, -1, -1], dtype=np.float32)
         act_upper_bound = np.array([ 1,  1,  1], dtype=np.float32)
-        self.action_space = Box(low=act_lower_bound, high=act_upper_bound, dtype=np.float32 )
+        self.action_space = Box(low=act_lower_bound, high=act_upper_bound, dtype=np.float32)
         return self.action_space
     
     def _observationSpace(self):
@@ -79,7 +88,6 @@ class DroneControllerPID(BaseDroneController):
         target = action
         
         position, orientation = p.getBasePositionAndOrientation(self.drone)
-        # rpy = p.getEulerFromQuaternion(orientation)
         linear_vel, angular_vel = p.getBaseVelocity(self.drone)
 
         next_pos = self._calculateNextStep(
@@ -99,10 +107,26 @@ class DroneControllerPID(BaseDroneController):
 
         return rpm
 
-    def step(self, action):
-        # action = np.clip(action, self.action_space.low, self.action_space.high)
+    def _drag_wind(self):
+        _, orientation = p.getBasePositionAndOrientation(self.drone)
+        linear_vel, _ = p.getBaseVelocity(self.drone)
+        base_rot = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
+        relative_velocity = np.array(linear_vel) - self.wind_force
 
-        position, orientation = p.getBasePositionAndOrientation(self.drone)
+        drag = np.dot(base_rot.T, self.DRAG_COEFF * np.array(relative_velocity))
+        p.applyExternalForce(self.drone,
+                             4,
+                             forceObj=drag,
+                             posObj=[0, 0, 0],
+                             flags=p.LINK_FRAME,
+                             )
+  
+    def step(self, action):
+        p_s = self.rng.uniform(0, 1) # Probability for wind at each step
+        if self.args.enable_wind == True and p_s < 0.3 and self.wind_active:
+            self._drag_wind()
+
+        position, _ = p.getBasePositionAndOrientation(self.drone)
         rpm = np.reshape(self._preprocessAction(action), 4)
 
         forces = np.array(rpm**2) * self.KF
@@ -125,14 +149,13 @@ class DroneControllerPID(BaseDroneController):
             flags=p.LINK_FRAME,
         )
 
-        p.resetDebugVisualizerCamera(cameraDistance=2, cameraYaw=45, cameraPitch=-45, cameraTargetPosition=position)
+        p.resetDebugVisualizerCamera(cameraDistance=1, cameraYaw=0, cameraPitch=-45, cameraTargetPosition=position)
         p.stepSimulation()
         if args.visual_mode.upper() == "GUI":
             time.sleep(self.time_step)
 
         observation = self._get_observation()
-        reward_function = args.reward_function
-        reward = self._compute_reward(observation, action, reward_function)
+        reward = self._compute_reward(observation, action, self.reward_function)
         terminated = (
             self._is_done(observation) or self.step_counter >= self.max_steps or getattr(self, "crashed", False)
         )
@@ -144,11 +167,17 @@ class DroneControllerPID(BaseDroneController):
 def main():
     num_cpu = multiprocessing.cpu_count()
     print(f"Number of CPU cores available: {num_cpu}")
+    if args.visual_mode.upper() == "GUI":
+        num_cpu = 1
+    else: 
+        num_cpu = multiprocessing.cpu_count()
+        print(f"Number of CPU cores available: {num_cpu}")
+
     env = make_vec_env(
-        lambda: Monitor(DroneControllerPID()),
-        n_envs=num_cpu,
-        vec_env_cls=SubprocVecEnv,
-        seed=42
+          lambda: Monitor(DroneControllerPID()),
+          n_envs=num_cpu,
+          vec_env_cls=SubprocVecEnv,
+          seed=42
     )
 
     tensorboard_log_dir = args.tensorboard_log_dir
@@ -195,7 +224,7 @@ def main():
             eval_freq=10000,
             verbose=1
         )
-        model.learn(total_timesteps=2e6, callback=eval_callback, progress_bar=True)
+        model.learn(total_timesteps=1e6, callback=eval_callback, progress_bar=True)
     else:
         model.learn(total_timesteps=2e6, progress_bar=True)
     
