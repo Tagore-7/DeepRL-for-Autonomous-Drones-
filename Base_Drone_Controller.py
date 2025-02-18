@@ -266,22 +266,15 @@ class BaseDroneController(gym.Env):
         self.previous_shaping = shaping
 
         # #---- Reward for distance to obstacles ----#
-        d_max = 0.5
-        eta = 0.02
-        for obs_pos in self.obstacle_positions:
-            d = np.linalg.norm(np.array([px, py, pz]) - obs_pos)
-            if d < d_max:
-                obstacle_penalty += 0.5 * eta * ((1.0/d - 1.0/d_max)**2)
+        if self.args.add_obstacles:
+          d_max = 0.5
+          eta = 0.02
+          for obs_pos in self.obstacle_positions:
+              d = np.linalg.norm(np.array([px, py, pz]) - obs_pos)
+              if d < d_max:
+                  obstacle_penalty += 0.5 * eta * ((1.0/d - 1.0/d_max)**2)
 
-        reward = reward + obstacle_penalty
-
-        # distance_to_obstacles = [np.linalg.norm(np.array(pos[:2]) - observation[:2]) for pos in self.obstacle_positions]
-        # min_distance_to_obstacle = min(distance_to_obstacles) if distance_to_obstacles else float('inf')
-        # obstacle_penalty += -1 / min_distance_to_obstacle if min_distance_to_obstacle > 0 else -float('inf')
-        # if min_distance_to_obstacle < 0.05:
-        #     obstacle_penalty -= 50
-
-        # reward += obstacle_penalty
+          reward = reward + obstacle_penalty
 
         return reward
     
