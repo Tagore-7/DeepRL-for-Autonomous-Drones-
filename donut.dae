@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="utf-8"?>
+<COLLADA version="1.4.1" 
+         xmlns="http://www.collada.org/2005/11/COLLADASchema">
+    <asset>
+        <contributor>
+            <authoring_tool>Minimal Donut Example</authoring_tool>
+        </contributor>
+        <created>2023-01-01T00:00:00Z</created>
+        <modified>2023-01-01T00:00:00Z</modified>
+        <unit name="meter" meter="1"/>
+        <up_axis>Y_UP</up_axis>
+    </asset>
+
+    <!-- We define one geometry named "donutMesh" -->
+    <library_geometries>
+        <geometry id="donutMesh" name="donutMesh">
+            <mesh>
+
+                <!-- 1) Positions -->
+                <!-- 
+                     We'll do a torus with 8 segments around the major radius 
+                     and 4 segments around the minor radius.
+                     Major radius = 1, minor radius = 0.2 
+                     That yields 8*4 = 32 vertices, fairly low-resolution. 
+                -->
+                <source id="donutPositions">
+                    <float_array id="donutPositionsArray" count="96">
+                        <!-- 32 vertices * 3 coords each = 96 floats. -->
+
+                        <!-- We'll param by i=0..7 (major loop), j=0..3 (minor loop).
+                             Let major radius=1, minor radius=0.2
+                             iTheta = 2*pi*(i/8), jTheta = 2*pi*(j/4)
+                             x = (R + r cos jTheta) cos iTheta
+                             y = (R + r cos jTheta) sin iTheta
+                             z = r sin jTheta
+                        -->
+
+                        <!-- i=0..7, j=0..3. We'll list them in row-major order: 
+                             each 'i' goes through j=0..3.
+                        -->
+
+                        <!-- i=0, iTheta=0 -->
+                        1.2 0.0 0.0
+                        1.0 0.0 0.2
+                        0.8 0.0 0.0
+                        1.0 0.0 -0.2
+
+                        <!-- i=1, iTheta=45°=0.785398.. -->
+                        0.848528 0.848528 0.0
+                        0.707107 0.707107 0.2
+                        0.565685 0.565685 0.0
+                        0.707107 0.707107 -0.2
+
+                        <!-- i=2, iTheta=90°=1.5708 -->
+                        0.0 1.2 0.0
+                        0.0 1.0 0.2
+                        0.0 0.8 0.0
+                        0.0 1.0 -0.2
+
+                        <!-- i=3, iTheta=135°=2.35619 -->
+                        -0.848528 0.848528 0.0
+                        -0.707107 0.707107 0.2
+                        -0.565685 0.565685 0.0
+                        -0.707107 0.707107 -0.2
+
+                        <!-- i=4, iTheta=180°=3.14159 -->
+                        -1.2 0.0 0.0
+                        -1.0 0.0 0.2
+                        -0.8 0.0 0.0
+                        -1.0 0.0 -0.2
+
+                        <!-- i=5, iTheta=225°=3.9270 -->
+                        -0.848528 -0.848528 0.0
+                        -0.707107 -0.707107 0.2
+                        -0.565685 -0.565685 0.0
+                        -0.707107 -0.707107 -0.2
+
+                        <!-- i=6, iTheta=270°=4.71239 -->
+                        0.0 -1.2 0.0
+                        0.0 -1.0 0.2
+                        0.0 -0.8 0.0
+                        0.0 -1.0 -0.2
+
+                        <!-- i=7, iTheta=315°=5.49779 -->
+                        0.848528 -0.848528 0.0
+                        0.707107 -0.707107 0.2
+                        0.565685 -0.565685 0.0
+                        0.707107 -0.707107 -0.2
+                    </float_array>
+                    <technique_common>
+                        <accessor source="#donutPositionsArray" count="32" stride="3">
+                            <param name="X" type="float"/>
+                            <param name="Y" type="float"/>
+                            <param name="Z" type="float"/>
+                        </accessor>
+                    </technique_common>
+                </source>
+
+                <!-- 2) Normals (optional). We'll omit them for brevity. 
+                     If you'd like shading, you can define them similarly. -->
+
+                <!-- 3) Vertex Indices: We define triangles connecting these 32 vertices 
+                     in a grid of 8x4, with wrapping in both directions. 
+                     We'll have 8 * 4 squares => 32 squares, each square => 2 triangles => 64 triangles total. 
+                -->
+                <vertices id="donutVertices">
+                    <input semantic="POSITION" source="#donutPositions"/>
+                </vertices>
+                
+                <polylist material="donutMat" count="64">
+                    <input semantic="VERTEX" source="#donutVertices" offset="0"/>
+
+                    <!-- We need to list 64 * 3 = 192 indices for the triangles. 
+                         We'll define them in pairs of adjacent squares. 
+                         A simpler approach: we do "triangle strips" or "polylist", 
+                         but here's a straightforward listing. 
+                         
+                         We'll break this into the param indexing. 
+                         Let i range 0..7, j range 0..3. We'll define 
+                         nextI = (i+1) mod 8, nextJ=(j+1) mod 4.
+                         
+                         For each small quad => 2 triangles:
+                           v0 = i*4+j
+                           v1 = nextI*4+j
+                           v2 = nextI*4+nextJ
+                           v3 = i*4+nextJ
+                         We'll produce indices: (v0, v1, v2), (v0, v2, v3)
+                     -->
+
+                    <vcount>3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3  </vcount>
+                    <p>
+                        <!-- We will generate the triangles in a systematic way. -->
+
+                        <!-- We'll do a quick code snippet in our mind to produce them. 
+                             We'll list them manually here. 
+                             For each i in [0..7], j in [0..3], define:
+                               v0 = i*4 + j
+                               v1 = ((i+1)%8)*4 + j
+                               v2 = ((i+1)%8)*4 + ((j+1)%4)
+                               v3 = i*4 + ((j+1)%4)
+                             Then Tri 1: (v0, v1, v2), Tri 2: (v0, v2, v3)
+                        -->
+                        <!-- i=0..7, j=0..3, total 8*4=32 squares => 64 triangles => 192 indices. -->
+                        
+                        <!-- We'll do it systematically. For clarity, let's just produce them directly. 
+                             Apologies for the length, but it's required for a complete mesh.
+                        -->
+                        0 4 5   0 5 1 
+                        1 5 6   1 6 2
+                        2 6 7   2 7 3
+                        3 7 4   3 4 0
+
+                        4 8 9   4 9 5
+                        5 9 10  5 10 6
+                        6 10 11 6 11 7
+                        7 11 8  7 8 4
+
+                        8 12 13 8 13 9
+                        9 13 14 9 14 10
+                        10 14 15 10 15 11
+                        11 15 12 11 12 8
+
+                        12 16 17 12 17 13
+                        13 17 18 13 18 14
+                        14 18 19 14 19 15
+                        15 19 16 15 16 12
+
+                        16 20 21 16 21 17
+                        17 21 22 17 22 18
+                        18 22 23 18 23 19
+                        19 23 20 19 20 16
+
+                        20 24 25 20 25 21
+                        21 25 26 21 26 22
+                        22 26 27 22 27 23
+                        23 27 24 23 24 20
+
+                        24 28 29 24 29 25
+                        25 29 30 25 30 26
+                        26 30 31 26 31 27
+                        27 31 28 27 28 24
+
+                        28 0 1 28 1 29
+                        29 1 2 29 2 30
+                        30 2 3 30 3 31
+                        31 3 0 31 0 28
+                    </p>
+                </polylist>
+
+            </mesh>
+        </geometry>
+    </library_geometries>
+
+    <!-- A simple material definition (you can rename or add effect) -->
+    <library_effects>
+        <effect id="donutEffect">
+            <profile_COMMON>
+                <technique sid="common">
+                    <phong>
+                        <diffuse>
+                            <color>0.6 0.4 0.2 1</color>
+                        </diffuse>
+                    </phong>
+                </technique>
+            </profile_COMMON>
+        </effect>
+    </library_effects>
+
+    <library_materials>
+        <material id="donutMat" name="donutMat">
+            <instance_effect url="#donutEffect"/>
+        </material>
+    </library_materials>
+
+    <!-- One node referencing the geometry -->
+    <library_visual_scenes>
+        <visual_scene id="Scene" name="Scene">
+            <node id="donutNode" name="donutNode">
+                <matrix>1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1</matrix>
+                <instance_geometry url="#donutMesh">
+                    <bind_material>
+                        <technique_common>
+                            <instance_material symbol="donutMat" target="#donutMat"/>
+                        </technique_common>
+                    </bind_material>
+                </instance_geometry>
+            </node>
+        </visual_scene>
+    </library_visual_scenes>
+
+    <scene>
+        <instance_visual_scene url="#Scene"/>
+    </scene>
+</COLLADA>

@@ -4,15 +4,18 @@ import numpy as np
 import pybullet as p
 from stable_baselines3 import PPO, A2C, DDPG, TD3, SAC
 from sb3_contrib import ARS, CrossQ, TQC, TRPO
-from Drone_Controller_PID import DroneControllerPID  
+# from Drone_Controller_PID import DroneControllerPID
+from Drone_Controller_RPM import DroneControllerRPM
 
-
-
-
-    
 # Initialize environment
-env = DroneControllerPID()
-model_path = "/home/trkosire/Tims_RL_Project/Making_Drones/testing_code/logs_metrics_benchmark_tensorboard/PPO_2/best_model.zip"
+# env = DroneControllerPID()
+env = DroneControllerRPM()
+
+# model_path = "model_RPM"
+model_path = "best_model_RPM"
+
+# model_path = "drone_landing_model_using_ppo"
+# model_path = "./logs_metrics_benchmark_tensorboard/best_model"
 model = PPO.load(model_path, env=env, device='cpu')
 # model = A2C.load(model_path, env=env, device='cpu')
 # model = DDPG.load(model_path, env=env, device='cpu')
@@ -24,8 +27,7 @@ model = PPO.load(model_path, env=env, device='cpu')
 # model = TRPO.load(model_path, env=env, device='cpu')
 
 
-
-n_episodes = 10
+n_episodes = 100
 
 # Evaluate episodes
 for episode in range(n_episodes):
