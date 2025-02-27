@@ -24,7 +24,7 @@ from enums import DroneModel
 def parse_args():
     parser = argparse.ArgumentParser(description='Benchmarking DeepRL algorithms for drone landing task')
     parser.add_argument('--algorithm_name', type=str, default='PPO',
-                        help='The name of the algorithm to benchmark. Options: PPO, A2C')
+                        help='The name of the algorithm to benchmark. Options: PPO, A2C, DDPG, TD3, SAC, ARS, CROSSQ, TQC, TRPO')
     parser.add_argument('--boundary_limits', type=int, default=20,
                         help='The boundary limits for the drone to fly in the environment')
     parser.add_argument('--launch_pad_position', type=lambda x: np.array([float(i) for i in x.split(",")]),
@@ -42,9 +42,16 @@ def parse_args():
                         help='Name of the model to save')
     parser.add_argument('--visual_mode', type=str, default="DIRECT",
                         help='Visual mode of the environment: GUI or DIRECT')
-    parser.add_argument('--discount_factor', type = float, default = 0.99,
-                        help = 'Discount factor (gamma) for the RL algorithm',
-    )
+    parser.add_argument('--discount_factor', type=float, default=0.99,
+                        help='Discount factor (gamma) for the RL algorithm')
+    parser.add_argument('--reward_function', type = int, default= 1, 
+                        help = 'Which reward function you want to use: 1 or 2 or 3')
+    parser.add_argument('--enable_wind', type=bool, default=False,
+                        help='Determines if there will be wind effects applied to the drone')
+    parser.add_argument('--add_obstacles', type=bool, default=False,
+                        help='Determines if there will obstacles')
+    parser.add_argument('--debug_axes', type=bool, default=False,
+                        help='Draws visual lines for drone axes for debugging')
     return parser.parse_args()
 
 args = parse_args()
@@ -53,10 +60,12 @@ class DroneControllerVelocity(BaseDroneController):
     def __init__(self):
         super(DroneControllerVelocity, self).__init__(args=args)
         self.pid = DSLPIDControl(DroneModel.CF2X)
+        self.reward_function = self.args.reward_function
+        self.SPEED_LIMIT = 0.03 * self.MAX_SPEED_KMH * (1000/3600)
 
     def _actionSpace(self):
         # ---- [desired_vx, desired_vy, desired_vz, desired_yaw_rate] ---- # 
-        act_lower_bound = np.array([-1, -1, -1, -1], dtype=np.float32)
+        act_lower_bound = np.array([-1, -1, -1, 0], dtype=np.float32)
         act_upper_bound = np.array([ 1,  1,  1, 1], dtype=np.float32)
         self.action_space = Box(low=act_lower_bound, high=act_upper_bound, dtype=np.float32)
         return self.action_space
@@ -69,44 +78,45 @@ class DroneControllerVelocity(BaseDroneController):
         return self.observation_space
 
     def step(self, action):
-        action = np.clip(action, self.action_space.low, self.action_space.high)
+        # print(f"Action: {action}")
+        # action = np.clip(action, self.action_space.low, self.action_space.high)
         
         
         position, orientation = p.getBasePositionAndOrientation(self.drone)
-        linear_vel, angular_vel = p.getBaseVelocity(self.drone)
+        # linear_vel, angular_vel = p.getBaseVelocity(self.drone)
 
-        # ---- Calculate distance to launch pad ---- #
-        distance_to_pad_xy = np.linalg.norm(self.target_pos - np.array(position))
         # force_limit = self.MASS * -self.gravity * self.THRUST2WEIGHT_RATIO
         # v_max = math.sqrt(force_limit / self.KF)
         # speed_scale = min(distance_to_pad_xy, v_max)
 
-        # Drone drops in Z axis immediately
-        # Before attempting to fly in XY to launch pad.
-        # Testing safe altitude here
-        if distance_to_pad_xy > 2.0:
-            safe_altitude = 2.0
-            test_target_pos = self.target_pos.copy()
-            # Force the z component to be at least the safe altitude:
-            test_target_pos[2] = max(self.target_pos[2], safe_altitude)
+        if np.linalg.norm(action[0:3]) != 0:
+            v_unit_vector = action[0:3] / np.linalg.norm(action[0:3])
         else:
-            test_target_pos = self.target_pos
+            v_unit_vector = np.zeros(3)
 
-        drone_position = np.array(position)
-        drone_linear_vel = np.array(linear_vel)
-        drone_angular_vel = np.array(angular_vel)
-        drone_orientation = np.array(orientation)
+        # drone_position = np.array(position)
+        # drone_linear_vel = np.array(linear_vel)
+        # drone_angular_vel = np.array(angular_vel)
+        # drone_orientation = np.array(orientation)
+
+        observation = self._get_observation()
+        px, py, pz = observation[0:3]  # Position
+        vx, vy, vz = observation[3:6]  # Linear velocity
+        roll, pitch, yaw = observation[6:9]
+        ax, ay, az, aw = action[0], action[1], action[2], action[3]  # Actions from the agent
+
 
         # ---- Calculate control actions based on position ---- #
         rpm, pos_error, yaw_error = self.pid.computeControl(
             control_timestep = self.time_step,
-            cur_pos = drone_position,
-            cur_quat = drone_orientation,
-            cur_vel = drone_linear_vel,
-            cur_ang_vel = drone_angular_vel,
-            target_pos = test_target_pos,
+            cur_pos = observation[0:3],
+            cur_quat = orientation,
+            cur_vel = observation[3:6],
+            cur_ang_vel = observation[9:12],
+            target_pos = observation[0:3],
+            target_vel=self.SPEED_LIMIT * np.abs(action[3]) * v_unit_vector
         )
-        #print(f"RPM: {rpm}, Position Error: {pos_error}, Yaw Error: {yaw_error}")
+        # print(f"RPM: {rpm}, Position Error: {pos_error}, Yaw Error: {yaw_error}")
 
         # ---- Convert RPM to force and torque ---- #
         forces = np.array(rpm**2)*self.KF
@@ -118,9 +128,7 @@ class DroneControllerVelocity(BaseDroneController):
         # ---- two rotors spin clockwise, rear spin counterclockwise.
         # ---- Net torque around z-axis depends on the sign of each rotor's torque?
         # ---- So summing up with alternating signs, you get the total yaw torque around the vertical axis?
-        z_torque = (-torques[0] + torques[1] - torques[2] + torques[3]) #  in the paper it is alpha * pz which is altitude distance 
-        # z_torque = p.getBasePositionAndOrientation(self.drone)[0][2] * 0.2 
-        # print(f"Z Torque: {z_torque}")
+        z_torque = (-torques[0] + torques[1] - torques[2] + torques[3]) #  in the paper it is alpha * pz which is altitude distance
 
         # ---- Applying forces to each rotor ---- #
         for i in range(4):
@@ -136,19 +144,19 @@ class DroneControllerVelocity(BaseDroneController):
         # ---- Apply net torque about the z-axis ---- #
         p.applyExternalTorque(
             self.drone,
-            -1,  # Using 4 for the center of mass link in URDF
+            4,  # Using 4 for the center of mass link in URDF
             torqueObj=[0, 0, z_torque],
             flags=p.LINK_FRAME
         )
 
-        p.resetDebugVisualizerCamera(cameraDistance=3, cameraYaw=45, cameraPitch=-45,cameraTargetPosition=position)
+        p.resetDebugVisualizerCamera(cameraDistance=1, cameraYaw=0, cameraPitch=-45,cameraTargetPosition=position)
         p.stepSimulation()
         self.step_counter += 1
         if args.visual_mode.upper() == "GUI":
             time.sleep(self.time_step)
 
         observation = self._get_observation()
-        reward = self._compute_reward(observation, action)
+        reward = self._compute_reward(observation, action, self.reward_function)
         terminated = (
             self._is_done(observation) or self.step_counter >= self.max_steps or getattr(self, "crashed", False)
         )
