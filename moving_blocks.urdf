@@ -1,0 +1,32 @@
+<?xml version="1.0" ?>
+<robot name="moving_block">
+  <link name="block">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1.0"/>   <!-- Give it mass to be dynamic  cube size 0.3m * 0.3m * 0.3m -->
+      <!-- Inertia for a cube of side 0.3m and mass 1kg -->
+      <inertia ixx="0.015" ixy="0.0" ixz="0.0" iyy="0.015" iyz="0.0" izz="0.015"/>
+      </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.3 0.3 0.3"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0 0 1 1"/>
+      </material>
+    </visual>
+    <!-- Collision representation of the cube (0.3m x 0.3m x 0.3m) -->
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.3 0.3 0.3"/>
+      </geometry>
+    </collision>   
+     <contact>
+      <lateral_friction value="0.8"/>
+      <rolling_friction value="0.0"/>
+      <restitution value="0.0"/>
+    </contact>
+  </link>
+</robot>

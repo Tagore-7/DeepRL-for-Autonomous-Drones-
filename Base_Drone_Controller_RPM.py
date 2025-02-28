@@ -17,6 +17,21 @@ class BaseDroneController(gym.Env):
             p.connect(p.DIRECT)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
+        # add four static blocks ar four corners of the launch pad 
+        self.first_block = p.loadURDF("block.urdf", basePosition=[3, 3, 3], useFixedBase=True)
+        self.second_block = p.loadURDF("block.urdf", basePosition=[3, -3, 3], useFixedBase=True)
+        self.third_block = p.loadURDF("block.urdf", basePosition=[-3, 3, 3], useFixedBase=True)
+        self.fourth_block = p.loadURDF("block.urdf", basePosition=[-3, -3, 3], useFixedBase=True)         
+
+        # add two moving blocks that move to and fro on the their initial position one on the x-axis and the other on the y-axis 
+        # one moves at double speed of the other to avoid collision
+        self.first_moving_block = p.loadURDF("moving_blocks.urdf", basePosition=[0, 0, 1], useFixedBase=True)
+        self.second_moving_block = p.loadURDF("moving_blocks.urdf", basePosition=[0, 0, 1], useFixedBase=True)
+
+
+        self.step_counter = 0 
+
+
         #---- Parameter arguments ----#
         self.launch_pad_position = self.args.launch_pad_position
         self.boundary_limits = self.args.boundary_limits
@@ -142,6 +157,17 @@ class BaseDroneController(gym.Env):
         p.setGravity(0, 0, self.gravity)
         p.setTimeStep(self.PYB_TIMESTEP)
 
+        # add four static blocks ar four corners of the launch pad 
+        first_block = p.loadURDF("static_blocks.urdf", basePosition=[3, 3, 3], useFixedBase=True)
+        second_block = p.loadURDF("static_blocks.urdf", basePosition=[3, -3, 3], useFixedBase=True)
+        third_block = p.loadURDF("static_blocks.urdf", basePosition=[-3, 3, 3], useFixedBase=True)
+        fourth_block = p.loadURDF("static_blocks.urdf", basePosition=[-3, -3, 3], useFixedBase=True)  
+
+        # add two moving blocks that move to and fro on the their initial position one on the x-axis and the other on the y-axis 
+        # one moves at double speed of the other to avoid collision
+        first_moving_block = p.loadURDF("moving_blocks.urdf", basePosition=[0, 0, 1], useFixedBase=True)
+        second_moving_block = p.loadURDF("moving_blocks.urdf", basePosition=[0, 0, 1], useFixedBase=True)
+
         #---- Load ground plane, drone, launch pad, and obstacles models ----#
         self.plane = p.loadURDF("plane.urdf") 
         self.launch_pad = p.loadURDF("launch_pad.urdf", self.launch_pad_position, useFixedBase=True)
@@ -207,6 +233,29 @@ class BaseDroneController(gym.Env):
         obstacle.append(donut_id_two)
         
         return obstacle
+    
+    def _updateMovingBlocks(self):
+        """
+        Update the positions of the moving blocks so that they oscillate along a predefined axis.
+        The first moving block oscillates along the x-axis, and the second along the y-axis.
+        Their movement is determined by a sine function based on simulation time.
+        """
+        # Define amplitude and angular frequency.
+        amplitude = 3.0  # maximum displacement in meters
+        omega = 0.5      # angular frequency in rad/s
+
+        # Compute an approximate simulation time from the step counter.
+        current_time = self.step_counter * self.CTRL_TIMESTEP
+
+        # For the first moving block: oscillate along x-axis.
+        new_x = amplitude * np.sin(omega * current_time)
+        new_pos1 = [new_x, 0, 1]  # keep y=0 and fixed z = 1
+        p.resetBasePositionAndOrientation(self.first_moving_block, new_pos1, p.getQuaternionFromEuler([0, 0, 0]))
+
+        # For the second moving block: oscillate along y-axis at double speed.
+        new_y = amplitude * np.sin(2 * omega * current_time)
+        new_pos2 = [0, new_y, 1]  # keep x=0 and fixed z = 1
+        p.resetBasePositionAndOrientation(self.second_moving_block, new_pos2, p.getQuaternionFromEuler([0, 0, 0]))
     
     def _updateAndStoreKinematicInformation(self):
         """Updates and stores the drones kinemaatic information.

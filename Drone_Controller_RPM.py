@@ -204,7 +204,13 @@ class DroneControllerRPM(BaseDroneController):
             self.last_clipped_action = clipped_action
 
             if args.visual_mode.upper() == "GUI":
-                time.sleep(self.time_step)
+                # time.sleep(self.time_step)
+                time.sleep(1/240)
+
+            # Update moving blocks on each simulation step.
+            self._updateMovingBlocks() 
+        
+
 
         #---- Update and store the drones kinematic information ----#
         self._updateAndStoreKinematicInformation()
@@ -218,7 +224,7 @@ class DroneControllerRPM(BaseDroneController):
         self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
         return observation, reward, terminated, truncated, {}
     
-    def _computeTerminated(self):
+    def _computeTerminated(self): 
         if self.landed:
             return True
         
@@ -269,16 +275,16 @@ def main():
     print(f"Number of CPU cores available: {num_cpu}")
     if args.visual_mode.upper() == "GUI":
         num_cpu = 1
+        env = Monitor(DroneControllerRPM())
     else: 
         num_cpu = multiprocessing.cpu_count()
         print(f"Number of CPU cores available: {num_cpu}")
-
-    env = make_vec_env(
+        env = make_vec_env(
           lambda: Monitor(DroneControllerRPM()),
           n_envs=num_cpu,
           vec_env_cls=SubprocVecEnv,
           seed=42
-    )
+         )
 
     tensorboard_log_dir = args.tensorboard_log_dir
     gamma_value = args.discount_factor
