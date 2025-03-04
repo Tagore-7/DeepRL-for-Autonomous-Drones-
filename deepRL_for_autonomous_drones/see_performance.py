@@ -2,21 +2,17 @@ import argparse
 import time
 import numpy as np
 import pybullet as p
+import pkg_resources
 from stable_baselines3 import PPO, A2C, DDPG, TD3, SAC
 from sb3_contrib import ARS, CrossQ, TQC, TRPO
-# from Drone_Controller_PID import DroneControllerPID
-from Drone_Controller_RPM import DroneControllerRPM
+from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControllerRPM
 
 # Initialize environment
-# env = DroneControllerPID()
 env = DroneControllerRPM()
 
-# model_path = "model_RPM"
-model_path = "best_model_RPM"
+model = PPO.load(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'envs/logs_metrics_benchmark_tensorboard/best_model'), env=env, device='cpu')
+# model = PPO.load(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'envs/drone_landing_model_using_ppo'), env=env, device='cpu')
 
-# model_path = "drone_landing_model_using_ppo"
-# model_path = "./logs_metrics_benchmark_tensorboard/best_model"
-model = PPO.load(model_path, env=env, device='cpu')
 # model = A2C.load(model_path, env=env, device='cpu')
 # model = DDPG.load(model_path, env=env, device='cpu')
 # model = TD3.load(model_path, env=env, device='cpu')

@@ -5,3 +5,4 @@ We suggest creating conda environment with python 3.10.14 and ubuntu 20.04.6.
 
 Install the required pacakges in the requirements.txt 
 
+Run "pip install -e ."

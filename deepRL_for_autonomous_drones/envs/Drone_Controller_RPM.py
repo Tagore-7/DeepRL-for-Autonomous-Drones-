@@ -10,6 +10,7 @@ import random
 import xml.etree.ElementTree as ET
 import math
 import noise
+import multiprocessing
 
 from stable_baselines3 import PPO, A2C, DDPG, TD3, SAC
 from sb3_contrib import ARS, CrossQ, TQC, TRPO
@@ -17,16 +18,12 @@ from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
 from stable_baselines3.common.monitor import Monitor
-# from Base_Drone_Controller import BaseDroneController
-from Base_Drone_Controller_RPM import BaseDroneController
-
-import multiprocessing
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-
-from DSLPIDControl import DSLPIDControl
-from enums import DroneModel
+from deepRL_for_autonomous_drones.envs.Base_Drone_Controller_RPM import BaseDroneController
+from deepRL_for_autonomous_drones.control.DSLPIDControl import DSLPIDControl
+from deepRL_for_autonomous_drones.utils.enums import DroneModel
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Benchmarking DeepRL algorithms for drone landing task')
@@ -68,11 +65,9 @@ args = parse_args()
 class DroneControllerRPM(BaseDroneController):
     def __init__(self):
         super(DroneControllerRPM, self).__init__(args=args)
-        self.pid = DSLPIDControl(DroneModel.CF2X)
+        # self.pid = DSLPIDControl(DroneModel.CF2X)
         self.enable_wind: bool = self.args.enable_wind
         self.reward_function = self.args.reward_function
-
-        self.max_thrust = 2.0
 
     def _actionSpace(self): 
         #---- RPMs of the four drone rotors ----#
@@ -153,10 +148,16 @@ class DroneControllerRPM(BaseDroneController):
                     posObj=[0, 0, 0],
                     flags=p.LINK_FRAME
                 )
+
+    def _normalizedActionToRPM(self, action):
+        if np.any(np.abs(action) > 1):
+            print("Normalized action out of bounds")
+        return np.where(action <= 0, (action+1)*self.HOVER_RPM, self.HOVER_RPM + (self.MAX_RPM - self.HOVER_RPM)*action)
         
     def _preprocessAction(self, action):
         self.action_buffer.append(action)
         rpm = np.array(self.HOVER_RPM * (1+0.05*action))
+        # rpm = self._normalizedActionToRPM(action)
 
         return rpm
         
@@ -208,9 +209,8 @@ class DroneControllerRPM(BaseDroneController):
                 time.sleep(1/240)
 
             # Update moving blocks on each simulation step.
-            self._updateMovingBlocks() 
-        
-
+            if self._obstacles_active:
+                self._updateMovingBlocks() 
 
         #---- Update and store the drones kinematic information ----#
         self._updateAndStoreKinematicInformation()
@@ -227,29 +227,33 @@ class DroneControllerRPM(BaseDroneController):
     def _computeTerminated(self): 
         if self.landed:
             return True
+
+        state = self._getDroneStateVector()
+        if (abs(state[7]) > 1.2 or abs(state[8]) > 1.2):
+            return True
+
+        if self.crashed:
+          return True
+
+        contact_with_plane = p.getContactPoints(self.drone, self.plane)
+        if contact_with_plane:
+            self.crashed = True
+            return True
+
+        if self.args.add_obstacles:
+            if any(p.getContactPoints(self.drone, obstacle) for obstacle in self.obstacles):
+                self.crashed = True
+                return True
+
+        if state[2] <= 0 or abs(state[0]) > self.boundary_limits or abs(state[1]) > self.boundary_limits or state[1] > self.boundary_limits:
+            self.crashed = True 
+            return True
         
         return False
         
     def _computeTruncated(self):
-        state = self._getDroneStateVector()
-        # if (abs(state[7]) > 1 or abs(state[8]) > 1):
-        #     return True
-        
-        if self.crashed or self.step_counter >= self.max_steps:
-              return True
-        
-        contact_points = p.getContactPoints(self.drone)
-        for contact in contact_points:
-            contact_two_id = contact[2]
-            if contact_two_id == self.plane:
-                return True
-            if self.args.add_obstacles:
-              if any(obstacle == contact_two_id for obstacle in self.obstacles):
-                  return True
-              
-        if state[2] <= 0 or abs(state[0]) > self.boundary_limits or abs(state[1]) > self.boundary_limits or state[1] > self.boundary_limits:
-              self.crashed = True 
-              return True
+        if self.step_counter >= self.max_steps:
+          return True
         
         return False
 
@@ -270,6 +274,29 @@ class EpisodeRewardCallback(BaseCallback):
 
         return True
 
+class ToggleObstaclesCallback(BaseCallback):
+    """
+    After `threshold` timesteps, toggle the environment's obstacle mode ON.
+    """
+    def __init__(self, threshold: int, enable_toggle: bool, verbose=0):
+        super(ToggleObstaclesCallback, self).__init__(verbose)
+        self.threshold = threshold
+        self.enable_toggle = enable_toggle
+        self.has_toggled = False
+
+    def _on_step(self) -> bool:
+        if not self.enable_toggle:
+            return True
+
+        # self.model.num_timesteps is the total timesteps for the entire training,
+        # across all parallel environments.
+        if not self.has_toggled and self.model.num_timesteps >= self.threshold:
+            print(f"Toggling obstacles ON at timestep: {self.model.num_timesteps}")
+            # Turn obstacles on for all parallel sub-environments
+            self.training_env.env_method("setObstacleMode", True)
+            self.has_toggled = True
+        return True
+
 def main():
     num_cpu = multiprocessing.cpu_count()
     print(f"Number of CPU cores available: {num_cpu}")
@@ -278,7 +305,6 @@ def main():
         env = Monitor(DroneControllerRPM())
     else: 
         num_cpu = multiprocessing.cpu_count()
-        print(f"Number of CPU cores available: {num_cpu}")
         env = make_vec_env(
           lambda: Monitor(DroneControllerRPM()),
           n_envs=num_cpu,
@@ -289,9 +315,12 @@ def main():
     tensorboard_log_dir = args.tensorboard_log_dir
     gamma_value = args.discount_factor
     algorithm_name = args.algorithm_name.upper()
+    
+    #---- Custom callbacks ----#
     reward_callback = EpisodeRewardCallback()
+    toggle_callback = ToggleObstaclesCallback(threshold=3e6, enable_toggle=args.add_obstacles)
 
-    # Choose the model based on the algorithm name
+    #---- Choose the model based on the algorithm name ----#
     if algorithm_name == "PPO":
         model = PPO("MlpPolicy", env, verbose=1, gamma=gamma_value, tensorboard_log=tensorboard_log_dir, device="cpu")
     elif algorithm_name == "A2C":
@@ -331,8 +360,14 @@ def main():
             eval_freq=10000,
             verbose=1
         )
-        model.learn(total_timesteps=3e6, callback=[eval_callback, reward_callback], progress_bar=True)
         # model.learn(total_timesteps=5e6, callback=eval_callback, progress_bar=True)
+        model.learn(total_timesteps=10e6, callback=[eval_callback, reward_callback], progress_bar=True)
+        # model.learn(total_timesteps=10e6, callback=[eval_callback, toggle_callback], progress_bar=True)
+        # model.learn(
+        #     total_timesteps=10e6, 
+        #     callback=[eval_callback, reward_callback, toggle_callback], 
+        #     progress_bar=True
+        # )
     else:
         model.learn(total_timesteps=1e6, progress_bar=True)
     

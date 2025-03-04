@@ -6,6 +6,7 @@ import time
 import random
 import xml.etree.ElementTree as ET
 import math
+import pkg_resources
 from collections import deque
 
 class BaseDroneController(gym.Env):
@@ -17,21 +18,6 @@ class BaseDroneController(gym.Env):
             p.connect(p.DIRECT)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
-        # add four static blocks ar four corners of the launch pad 
-        self.first_block = p.loadURDF("block.urdf", basePosition=[3, 3, 3], useFixedBase=True)
-        self.second_block = p.loadURDF("block.urdf", basePosition=[3, -3, 3], useFixedBase=True)
-        self.third_block = p.loadURDF("block.urdf", basePosition=[-3, 3, 3], useFixedBase=True)
-        self.fourth_block = p.loadURDF("block.urdf", basePosition=[-3, -3, 3], useFixedBase=True)         
-
-        # add two moving blocks that move to and fro on the their initial position one on the x-axis and the other on the y-axis 
-        # one moves at double speed of the other to avoid collision
-        self.first_moving_block = p.loadURDF("moving_blocks.urdf", basePosition=[0, 0, 1], useFixedBase=True)
-        self.second_moving_block = p.loadURDF("moving_blocks.urdf", basePosition=[0, 0, 1], useFixedBase=True)
-
-
-        self.step_counter = 0 
-
-
         #---- Parameter arguments ----#
         self.launch_pad_position = self.args.launch_pad_position
         self.boundary_limits = self.args.boundary_limits
@@ -39,12 +25,15 @@ class BaseDroneController(gym.Env):
         self.distance_reward_weight = self.args.distance_reward_weight
         self.leg_contact_reward = self.args.leg_contact_reward
         self.gravity = self.args.gravity
+        self.add_obstacles = self.args.add_obstacles
+        self.delayed_obstacles = self.args.add_obstacles
+        self._obstacles_active = True
 
         #---- Constants ----#
         self.alpha = np.array([1.0, 1.0, 1.0])
         self.beta  = np.array([1.0, 1.0, 1.0])
         self.max_steps = 5000  # Maximum steps per episode
-        self.urdf_path = "cf2x.urdf"
+        self.urdf_path = "assets/cf2x.urdf"
         self.time_step = 1./240.
 
         self.RAD2DEG = 180/np.pi
@@ -124,6 +113,9 @@ class BaseDroneController(gym.Env):
         #---- Update and store the drones kinematic information ----#
         self._updateAndStoreKinematicInformation()
 
+        self.first_moving_block = 0
+        self.second_moving_block = 0
+
 
     # ---- Implement in Subclasses ---- #
     def _actionSpace(self):
@@ -150,6 +142,11 @@ class BaseDroneController(gym.Env):
 
         return self._getObservation(), {}
 
+    def setObstacleMode(self, mode: bool):
+        """Toggle whether obstacles should be loaded on the next reset."""
+        if self.delayed_obstacles:
+          self._obstacles_active = mode
+
     def _resetEnvironment(self):
         #---- Set PyBullet's parameters ----#
         p.resetSimulation()
@@ -158,22 +155,27 @@ class BaseDroneController(gym.Env):
         p.setTimeStep(self.PYB_TIMESTEP)
 
         # add four static blocks ar four corners of the launch pad 
-        first_block = p.loadURDF("static_blocks.urdf", basePosition=[3, 3, 3], useFixedBase=True)
-        second_block = p.loadURDF("static_blocks.urdf", basePosition=[3, -3, 3], useFixedBase=True)
-        third_block = p.loadURDF("static_blocks.urdf", basePosition=[-3, 3, 3], useFixedBase=True)
-        fourth_block = p.loadURDF("static_blocks.urdf", basePosition=[-3, -3, 3], useFixedBase=True)  
+        # self.first_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[3, 3, 3], useFixedBase=True)
+        # self.second_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[3, -3, 3], useFixedBase=True)
+        # self.third_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[-3, 3, 3], useFixedBase=True)
+        # self.fourth_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[-3, -3, 3], useFixedBase=True)
 
         # add two moving blocks that move to and fro on the their initial position one on the x-axis and the other on the y-axis 
         # one moves at double speed of the other to avoid collision
-        first_moving_block = p.loadURDF("moving_blocks.urdf", basePosition=[0, 0, 1], useFixedBase=True)
-        second_moving_block = p.loadURDF("moving_blocks.urdf", basePosition=[0, 0, 1], useFixedBase=True)
+        # self.first_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'), basePosition=[0, 0, 1], useFixedBase=True)
+        # self.second_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'), basePosition=[0, 0, 1], useFixedBase=True)
 
         #---- Load ground plane, drone, launch pad, and obstacles models ----#
         self.plane = p.loadURDF("plane.urdf") 
-        self.launch_pad = p.loadURDF("launch_pad.urdf", self.launch_pad_position, useFixedBase=True)
+        self.launch_pad = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/launch_pad.urdf'), self.launch_pad_position, useFixedBase=True)
+
         self.drone = self._loadDrone()
-        if self.args.add_obstacles:
-            self.obstacles = self._loadObstacles()
+        if self._obstacles_active:
+          self.first_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'), basePosition=[0, 0, 1], useFixedBase=True)
+          self.second_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'), basePosition=[0, 0, 1], useFixedBase=True)
+          self.obstacles = self._loadObstacles()
+        else:
+          self.obstacles = []
 
         #---- Debug local drone axes ----#
         if self.args.debug_axes and self.args.visual_mode.upper() == "GUI":
@@ -210,29 +212,38 @@ class BaseDroneController(gym.Env):
         start_x = random.uniform(-13, 13)
         start_y = random.uniform(-13, 13)
         start_z = random.uniform(3, 13)
-        drone = p.loadURDF(str(self.urdf_path), [start_x, start_y, start_z])
+        drone = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/cf2x.urdf'), [start_x, start_y, start_z])
 
         return drone
     
     def _loadObstacles(self):
-        obstacle = [] * 2
+        obstacles = []
         donut_collision = p.createCollisionShape(
             shapeType=p.GEOM_MESH,
-            fileName="torus.obj",
+            fileName=pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/torus.obj'),
             flags=p.GEOM_FORCE_CONCAVE_TRIMESH
         )
         donut_visual = p.createVisualShape(
             shapeType=p.GEOM_MESH,
-            fileName="torus.obj",
+            fileName=pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/torus.obj'),
             rgbaColor=[1, 0, 0, 1]
         )
         donut_id_one = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=donut_collision, baseVisualShapeIndex=donut_visual, basePosition=[0,0,1], baseOrientation=[1, 1, 1, 1])
-        obstacle.append(donut_id_one)
+        obstacles.append(donut_id_one)
 
         donut_id_two = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=donut_collision, baseVisualShapeIndex=donut_visual, basePosition=[0,0,2], baseOrientation=[1, 1, 1, 1])
-        obstacle.append(donut_id_two)
-        
-        return obstacle
+        obstacles.append(donut_id_two)
+
+        # add four static blocks at four corners of the launch pad 
+        first_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[3, 3, 3], useFixedBase=True)
+        second_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[3, -3, 3], useFixedBase=True)
+        third_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[-3, 3, 3], useFixedBase=True)
+        fourth_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[-3, -3, 3], useFixedBase=True)
+        obstacles.extend([first_block, second_block, third_block, fourth_block])
+
+        obstacles.extend([self.first_moving_block, self.second_moving_block])
+
+        return obstacles
     
     def _updateMovingBlocks(self):
         """
@@ -316,30 +327,31 @@ class BaseDroneController(gym.Env):
         shaping = (
             -100 * np.sqrt(rel_px**2 + rel_py**2 + rel_pz**2)  # Distance penalty
             - 10 * np.sqrt(vx**2 + vy**2 + vz**2)  # Velocity penalty
-            # -np.sqrt(ax**2 + ay**2  + az ** 2)  # Action penalty
+            # -np.sqrt(ax**2 + ay**2 + az**2)  # Action penalty
             -np.sqrt(ax**2 + ay**2  + az**2 + aw**2)  # Action penalty
         )
 
         # Check if drone has landed safely
         contact_points = p.getContactPoints(self.drone, self.launch_pad)
-        if contact_points and abs(vx)  < 0.1 and abs(vy) < 0.1 and abs(vz) < 0.1:
+        if contact_points and abs(vx)  < 0.2 and abs(vy) < 0.2 and abs(vz) < 0.2:
             print("Landed")
             self.c = 10 * (1 - abs(ax)) + 10 * (1 - abs(ay)) + 10 * (1 - abs(az)) + 10 * (1 - abs(aw)) # Bonus for throttle tending to zero
             shaping +=  self.c
             self.landed = True
         elif contact_points:
             print("Crashed")
+            plane_penalty -= 5
             self.crashed = True
 
         contact_points_plane = p.getContactPoints(self.drone, self.plane)
         if contact_points_plane:
-            plane_penalty -= 100
+            plane_penalty -= 50
             self.crashed = True
 
         if self.args.add_obstacles:
             if any(p.getContactPoints(self.drone, obstacle) for obstacle in self.obstacles):
                 print("Hit an obstacle")
-                obstacle_penalty -= 100
+                obstacle_penalty -= 50
                 self.crashed = True
 
         # Reward difference (temporal difference shaping)
@@ -360,7 +372,7 @@ class BaseDroneController(gym.Env):
             reward -= 1
         
         if abs(roll) < 0.5 and abs(pitch) < 0.5:
-            reward += 0.05
+            reward += 0.5
 
         reward = reward + obstacle_penalty + plane_penalty - tilt_penalty - spin_penalty
         return reward
@@ -534,8 +546,7 @@ class BaseDroneController(gym.Env):
     def _parseURDFParameters(self):
         """Loads parameters from a URDF file."""
 
-        tree = ET.parse(str(self.urdf_path))
-        URDF_TREE = tree.getroot()
+        URDF_TREE = ET.parse(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/cf2x.urdf')).getroot()
 
         M = float(URDF_TREE[1][0][1].attrib['value'])
         L = float(URDF_TREE[0].attrib['arm'])
