@@ -196,12 +196,10 @@ class DroneControllerRPM(BaseDroneController):
             p.stepSimulation()
 
             if self.args.enable_ground_effect:
-                print("Ground effect")
                 self._groundEffect(clipped_action)
 
             p_s = self.rng.uniform(0, 1) # Probability for wind at each step
             if self.args.enable_wind and p_s < 0.3 and self.wind_active:
-                print("Wind")
                 self._dragWind()
 
             self.last_clipped_action = clipped_action
@@ -254,27 +252,6 @@ class DroneControllerRPM(BaseDroneController):
         return False
         
     def _computeTruncated(self):
-        # state = self._getDroneStateVector()
-        # if (abs(state[7]) > 1.2 or abs(state[8]) > 1.2):
-        #     return True
-        
-        # if self.crashed or self.step_counter >= self.max_steps:
-        #       return True
-
-        # contact_with_plane = p.getContactPoints(self.drone, self.plane)
-        # if contact_with_plane:
-        #     self.crashed = True
-        #     return True
-
-        # if self.args.add_obstacles:
-        #     if any(p.getContactPoints(self.drone, obstacle) for obstacle in self.obstacles):
-        #         self.crashed = True
-        #         return True
-              
-        # if state[2] <= 0 or abs(state[0]) > self.boundary_limits or abs(state[1]) > self.boundary_limits or state[1] > self.boundary_limits:
-        #     self.crashed = True 
-        #     return True
-
         if self.step_counter >= self.max_steps:
           return True
         
@@ -384,17 +361,13 @@ def main():
             verbose=1
         )
         # model.learn(total_timesteps=5e6, callback=eval_callback, progress_bar=True)
-        # model.learn(total_timesteps=15e6, callback=[eval_callback, reward_callback], progress_bar=True)
+        model.learn(total_timesteps=10e6, callback=[eval_callback, reward_callback], progress_bar=True)
+        # model.learn(total_timesteps=10e6, callback=[eval_callback, toggle_callback], progress_bar=True)
         # model.learn(
         #     total_timesteps=10e6, 
         #     callback=[eval_callback, reward_callback, toggle_callback], 
         #     progress_bar=True
         # )
-        model.learn(
-            total_timesteps=10e6, 
-            callback=[eval_callback, toggle_callback], 
-            progress_bar=True
-        )
     else:
         model.learn(total_timesteps=1e6, progress_bar=True)
     
