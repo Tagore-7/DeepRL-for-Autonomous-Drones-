@@ -5,7 +5,7 @@ import numpy as np
 import xml.etree.ElementTree as etxml
 import pkg_resources
 
-from enums import DroneModel
+from deepRL_for_autonomous_drones.utils.enums import DroneModel
 
 class BaseControl(object):
     """Base class for control.

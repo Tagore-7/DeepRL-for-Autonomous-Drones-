@@ -1,0 +1,10 @@
+*Zone.Identifier
+logs_metrics_benchmark_tensorboard
+*.zip
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+
+# Distribution / packaging
+.eggs/
+*.egg-info/

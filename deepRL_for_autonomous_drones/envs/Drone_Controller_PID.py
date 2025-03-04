@@ -16,15 +16,14 @@ from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
-from Base_Drone_Controller import BaseDroneController
 
 import multiprocessing
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-
-from DSLPIDControl import DSLPIDControl
-from enums import DroneModel
+from deepRL_for_autonomous_drones.envs.Base_Drone_Controller import BaseDroneController
+from deepRL_for_autonomous_drones.control.DSLPIDControl import DSLPIDControl
+from deepRL_for_autonomous_drones.utils.enums import DroneModel
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Benchmarking DeepRL algorithms for drone landing task')
