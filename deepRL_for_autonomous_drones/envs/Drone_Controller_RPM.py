@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 import math
 import noise
 import multiprocessing
+import pkg_resources
 
 from stable_baselines3 import PPO, A2C, DDPG, TD3, SAC
 from sb3_contrib import ARS, CrossQ, TQC, TRPO
@@ -21,9 +22,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-from deepRL_for_autonomous_drones.envs.Base_Drone_Controller_RPM import BaseDroneController
-from deepRL_for_autonomous_drones.control.DSLPIDControl import DSLPIDControl
-from deepRL_for_autonomous_drones.utils.enums import DroneModel
+from deepRL_for_autonomous_drones.envs.Base_Drone_Controller import BaseDroneController
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Benchmarking DeepRL algorithms for drone landing task')
@@ -157,7 +156,6 @@ class DroneControllerRPM(BaseDroneController):
     def _preprocessAction(self, action):
         self.action_buffer.append(action)
         rpm = np.array(self.HOVER_RPM * (1+0.05*action))
-        # rpm = self._normalizedActionToRPM(action)
 
         return rpm
         
@@ -183,11 +181,10 @@ class DroneControllerRPM(BaseDroneController):
         )
   
     def step(self, action):
-        # p_s = self.rng.uniform(0, 1) # Probability for wind at each step
-        # if self.args.enable_wind == True and p_s < 0.3 and self.wind_active:
-        #     self._dragWind()
-
         clipped_action = np.reshape(self._preprocessAction(action), 4)
+
+        if self.PYB_STEPS_PER_CTRL > 1 and self.enable_ground_effect:
+            self._updateAndStoreKinematicInformation()
         for _ in range(self.PYB_STEPS_PER_CTRL):
             self._physics(clipped_action)
 
@@ -195,21 +192,20 @@ class DroneControllerRPM(BaseDroneController):
             p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-45, cameraTargetPosition=position)
             p.stepSimulation()
 
-            if self.args.enable_ground_effect:
+            if self.enable_ground_effect:
                 self._groundEffect(clipped_action)
 
             p_s = self.rng.uniform(0, 1) # Probability for wind at each step
-            if self.args.enable_wind and p_s < 0.3 and self.wind_active:
+            if self.enable_wind and p_s < 0.3 and self.wind_active:
                 self._dragWind()
 
             self.last_clipped_action = clipped_action
 
             if args.visual_mode.upper() == "GUI":
-                # time.sleep(self.time_step)
-                time.sleep(1/240)
+                time.sleep(self.time_step)
 
             # Update moving blocks on each simulation step.
-            if self._obstacles_active:
+            if self.add_obstacles and self._obstacles_active:
                 self._updateMovingBlocks() 
 
         #---- Update and store the drones kinematic information ----#
@@ -220,40 +216,34 @@ class DroneControllerRPM(BaseDroneController):
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
 
-        # self.step_counter += 1
         self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
         return observation, reward, terminated, truncated, {}
-    
-    def _computeTerminated(self): 
+
+    def _computeTerminated(self):
         if self.landed:
             return True
-
+        
+        return False
+        
+    def _computeTruncated(self):
         state = self._getDroneStateVector()
-        if (abs(state[7]) > 1.2 or abs(state[8]) > 1.2):
-            return True
-
-        if self.crashed:
-          return True
-
-        contact_with_plane = p.getContactPoints(self.drone, self.plane)
-        if contact_with_plane:
-            self.crashed = True
+        
+        if self.crashed or self.step_counter >= self.max_steps:
+              return True
+        
+        contact_with_ground = p.getContactPoints(self.drone, self.plane)
+        if contact_with_ground:
+            self.crashed = True 
             return True
 
         if self.args.add_obstacles:
             if any(p.getContactPoints(self.drone, obstacle) for obstacle in self.obstacles):
                 self.crashed = True
                 return True
-
+              
         if state[2] <= 0 or abs(state[0]) > self.boundary_limits or abs(state[1]) > self.boundary_limits or state[1] > self.boundary_limits:
-            self.crashed = True 
-            return True
-        
-        return False
-        
-    def _computeTruncated(self):
-        if self.step_counter >= self.max_steps:
-          return True
+              self.crashed = True 
+              return True
         
         return False
 
@@ -360,8 +350,8 @@ def main():
             eval_freq=10000,
             verbose=1
         )
-        # model.learn(total_timesteps=5e6, callback=eval_callback, progress_bar=True)
-        model.learn(total_timesteps=10e6, callback=[eval_callback, reward_callback], progress_bar=True)
+        # model.learn(total_timesteps=15e6, callback=eval_callback, progress_bar=True)
+        model.learn(total_timesteps=5e6, callback=[eval_callback, reward_callback], progress_bar=True)
         # model.learn(total_timesteps=10e6, callback=[eval_callback, toggle_callback], progress_bar=True)
         # model.learn(
         #     total_timesteps=10e6, 
