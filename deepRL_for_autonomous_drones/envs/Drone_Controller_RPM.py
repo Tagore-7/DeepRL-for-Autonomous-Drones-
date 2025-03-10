@@ -199,7 +199,7 @@ class DroneControllerRPM(BaseDroneController):
                 self._groundEffect(clipped_action)
 
             p_s = self.rng.uniform(0, 1) # Probability for wind at each step
-            if self.args.enable_wind and p_s < 0.3 and self.wind_active:
+            if self._wind_effect_active and p_s < 0.3:
                 self._dragWind()
 
             self.last_clipped_action = clipped_action
@@ -274,27 +274,72 @@ class EpisodeRewardCallback(BaseCallback):
 
         return True
 
-class ToggleObstaclesCallback(BaseCallback):
-    """
-    After `threshold` timesteps, toggle the environment's obstacle mode ON.
-    """
-    def __init__(self, threshold: int, enable_toggle: bool, verbose=0):
-        super(ToggleObstaclesCallback, self).__init__(verbose)
+    
+class ToggleWindCallback(BaseCallback):
+    def __init__(self, threshold: int, verbose=0):
+        super(ToggleWindCallback, self).__init__(verbose)
         self.threshold = threshold
-        self.enable_toggle = enable_toggle
         self.has_toggled = False
 
     def _on_step(self) -> bool:
-        if not self.enable_toggle:
-            return True
-
-        # self.model.num_timesteps is the total timesteps for the entire training,
-        # across all parallel environments.
         if not self.has_toggled and self.model.num_timesteps >= self.threshold:
-            print(f"Toggling obstacles ON at timestep: {self.model.num_timesteps}")
-            # Turn obstacles on for all parallel sub-environments
-            self.training_env.env_method("setObstacleMode", True)
+            print(f"Enabling wind effect at timestep: {self.model.num_timesteps}")
+            self.training_env.env_method("setWindEffects", True)
             self.has_toggled = True
+        return True
+    
+class ToggleStaticBlocksCallback(BaseCallback):
+    def __init__(self, threshold: int, verbose=0):
+        super(ToggleStaticBlocksCallback, self).__init__(verbose)
+        self.threshold = threshold
+        self.has_toggled = False
+
+    def _on_step(self) -> bool:
+        if not self.has_toggled and self.model.num_timesteps >= self.threshold:
+            print(f"Enabling static blocks at timestep: {self.model.num_timesteps}")
+            self.training_env.env_method("setStaticBlocks", True)
+            self.has_toggled = True
+        return True
+
+class ToggleDonutObstaclesCallback(BaseCallback):
+    def __init__(self, threshold: int, verbose=0):
+        super(ToggleDonutObstaclesCallback, self).__init__(verbose)
+        self.threshold = threshold
+        self.has_toggled = False
+
+    def _on_step(self) -> bool:
+        if not self.has_toggled and self.model.num_timesteps >= self.threshold:
+            print(f"Enabling donut obstacles at timestep: {self.model.num_timesteps}")
+            self.training_env.env_method("setDonutObstacles", True)
+            self.has_toggled = True
+        return True
+
+class ToggleMovingBlocksCallback(BaseCallback):
+    def __init__(self, threshold: int, verbose=0):
+        super(ToggleMovingBlocksCallback, self).__init__(verbose)
+        self.threshold = threshold
+        self.has_toggled = False
+
+    def _on_step(self) -> bool:
+        if not self.has_toggled and self.model.num_timesteps >= self.threshold:
+            print(f"Enabling moving blocks at timestep: {self.model.num_timesteps}")
+            self.training_env.env_method("setMovingBlocks", True)
+            self.has_toggled = True
+        return True
+
+class SaveModelCallback(BaseCallback):
+    def __init__(self, thresholds, save_paths, verbose=1):
+        super(SaveModelCallback, self).__init__(verbose)
+        self.thresholds = thresholds  # List of timesteps at which to save the model
+        self.save_paths = save_paths  # List of corresponding file names
+        self.saved = [False] * len(thresholds)
+
+    def _on_step(self) -> bool:
+        for i, threshold in enumerate(self.thresholds):
+            if not self.saved[i] and self.model.num_timesteps >= threshold:
+                self.model.save(self.save_paths[i])
+                print(f"Saved model at {threshold} timesteps to {self.save_paths[i]}")
+                self.saved[i] = True
         return True
 
 def main():
@@ -318,7 +363,21 @@ def main():
     
     #---- Custom callbacks ----#
     reward_callback = EpisodeRewardCallback()
-    toggle_callback = ToggleObstaclesCallback(threshold=3e6, enable_toggle=args.add_obstacles)
+    toggle_wind = ToggleWindCallback(threshold=int(10e6))
+    toggle_static = ToggleStaticBlocksCallback(threshold=int(20e6))
+    toggle_donuts = ToggleDonutObstaclesCallback(threshold=int(30e6))
+    toggle_moving = ToggleMovingBlocksCallback(threshold=int(40e6))
+
+    # Save models at specific timesteps:
+    save_thresholds = [10e6, 20e6, 30e6, 40e6, 50e6]
+    save_paths = [
+        "landing_model_10M", 
+        "landing_wind_model_wind_20M", 
+        "landing_wind_static_model_30M", 
+        "landing_wind_static_donuts_model_donuts_40M", 
+        "landing_wind_static_donuts_moving_model_50M"
+    ]
+    save_callback = SaveModelCallback(thresholds=save_thresholds, save_paths=save_paths)
 
     #---- Choose the model based on the algorithm name ----#
     if algorithm_name == "PPO":
@@ -360,16 +419,9 @@ def main():
             eval_freq=10000,
             verbose=1
         )
-        # model.learn(total_timesteps=5e6, callback=eval_callback, progress_bar=True)
-        model.learn(total_timesteps=10e6, callback=[eval_callback, reward_callback], progress_bar=True)
-        # model.learn(total_timesteps=10e6, callback=[eval_callback, toggle_callback], progress_bar=True)
-        # model.learn(
-        #     total_timesteps=10e6, 
-        #     callback=[eval_callback, reward_callback, toggle_callback], 
-        #     progress_bar=True
-        # )
+        model.learn(total_timesteps=50e6, callback=[reward_callback, toggle_wind, toggle_static, toggle_donuts, toggle_moving, save_callback, eval_callback], progress_bar=True)
     else:
-        model.learn(total_timesteps=1e6, progress_bar=True)
+        model.learn(total_timesteps=50e6, callback=[reward_callback, toggle_wind, toggle_static, toggle_donuts, toggle_moving, save_callback], progress_bar=True)
     
     model.save(f"{args.model_name_to_save}")
     

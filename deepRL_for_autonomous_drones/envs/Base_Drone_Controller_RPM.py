@@ -29,6 +29,12 @@ class BaseDroneController(gym.Env):
         self.delayed_obstacles = self.args.add_obstacles
         self._obstacles_active = True
 
+        # Initialize curriculum-related flags (all start as OFF)
+        self._wind_effect_active = False
+        self._static_blocks_active = False
+        self._donut_obstacles_active = False
+        self._moving_blocks_active = False        
+
         #---- Constants ----#
         self.alpha = np.array([1.0, 1.0, 1.0])
         self.beta  = np.array([1.0, 1.0, 1.0])
@@ -113,9 +119,6 @@ class BaseDroneController(gym.Env):
         #---- Update and store the drones kinematic information ----#
         self._updateAndStoreKinematicInformation()
 
-        self.first_moving_block = 0
-        self.second_moving_block = 0
-
 
     # ---- Implement in Subclasses ---- #
     def _actionSpace(self):
@@ -154,28 +157,41 @@ class BaseDroneController(gym.Env):
         p.setGravity(0, 0, self.gravity)
         p.setTimeStep(self.PYB_TIMESTEP)
 
-        # add four static blocks ar four corners of the launch pad 
-        # self.first_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[3, 3, 3], useFixedBase=True)
-        # self.second_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[3, -3, 3], useFixedBase=True)
-        # self.third_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[-3, 3, 3], useFixedBase=True)
-        # self.fourth_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[-3, -3, 3], useFixedBase=True)
-
-        # add two moving blocks that move to and fro on the their initial position one on the x-axis and the other on the y-axis 
-        # one moves at double speed of the other to avoid collision
-        # self.first_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'), basePosition=[0, 0, 1], useFixedBase=True)
-        # self.second_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'), basePosition=[0, 0, 1], useFixedBase=True)
-
         #---- Load ground plane, drone, launch pad, and obstacles models ----#
         self.plane = p.loadURDF("plane.urdf") 
         self.launch_pad = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/launch_pad.urdf'), self.launch_pad_position, useFixedBase=True)
 
         self.drone = self._loadDrone()
-        if self._obstacles_active:
-          self.first_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'), basePosition=[0, 0, 1], useFixedBase=True)
-          self.second_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'), basePosition=[0, 0, 1], useFixedBase=True)
-          self.obstacles = self._loadObstacles()
+
+        # Load static blocks if enabled
+        if self._static_blocks_active:
+            self.static_blocks = []
+            self.static_blocks.append(p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'),
+                                                basePosition=[3, 3, 3], useFixedBase=True))
+            self.static_blocks.append(p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'),
+                                                basePosition=[3, -3, 3], useFixedBase=True))
+            self.static_blocks.append(p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'),
+                                                basePosition=[-3, 3, 3], useFixedBase=True))
+            self.static_blocks.append(p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'),
+                                                basePosition=[-3, -3, 3], useFixedBase=True))
         else:
-          self.obstacles = []
+            self.static_blocks = []
+
+        # Load moving blocks if enabled
+        if self._moving_blocks_active:
+            self.first_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'),
+                                                basePosition=[0, 0, 1], useFixedBase=True)
+            self.second_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'),
+                                                basePosition=[0, 0, 1], useFixedBase=True)
+        else:
+            self.first_moving_block = None
+            self.second_moving_block = None
+
+        # Load donut obstacles if enabled
+        if self._donut_obstacles_active:
+            self.obstacles = self._loadObstacles()
+        else:
+            self.obstacles = []
 
         #---- Debug local drone axes ----#
         if self.args.debug_axes and self.args.visual_mode.upper() == "GUI":
@@ -198,8 +214,8 @@ class BaseDroneController(gym.Env):
 
         #---- Calculate wind force if enabled ----#
         self.p_e = self.rng.uniform(0,1)
-        self.wind_active = self.p_e < 0.8
-        if self.wind_active:
+        self._wind_effect_active = self.p_e < 0.8
+        if self._wind_effect_active:
             f_magnitude = self.rng.uniform(0, 0.005)
             f_direction = self.rng.uniform(-1, 1, 3)
             f_direction[2] = 0
@@ -241,7 +257,9 @@ class BaseDroneController(gym.Env):
         fourth_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[-3, -3, 3], useFixedBase=True)
         obstacles.extend([first_block, second_block, third_block, fourth_block])
 
-        obstacles.extend([self.first_moving_block, self.second_moving_block])
+        if self.first_moving_block is not None and self.second_moving_block is not None:
+            obstacles.extend([self.first_moving_block, self.second_moving_block])
+
 
         return obstacles
     
@@ -249,8 +267,11 @@ class BaseDroneController(gym.Env):
         """
         Update the positions of the moving blocks so that they oscillate along a predefined axis.
         The first moving block oscillates along the x-axis, and the second along the y-axis.
-        Their movement is determined by a sine function based on simulation time.
+        Their movement is determined by a sine function based on simulation time. 
         """
+        if self.first_moving_block is None or self.second_moving_block is None:
+            return
+
         # Define amplitude and angular frequency.
         amplitude = 3.0  # maximum displacement in meters
         omega = 0.5      # angular frequency in rad/s
@@ -322,18 +343,19 @@ class BaseDroneController(gym.Env):
         plane_penalty = 0
 
         rel_px, rel_py, rel_pz = np.array([px, py, pz]) - self.target_pos
+        rel_vx, rel_vy, rel_vz = np.array([vx, vy, vz]) - np.array([0, 0, 0])
 
         # Compute shaping reward
         shaping = (
             -100 * np.sqrt(rel_px**2 + rel_py**2 + rel_pz**2)  # Distance penalty
-            - 10 * np.sqrt(vx**2 + vy**2 + vz**2)  # Velocity penalty
+            - 10 * np.sqrt(rel_vx**2 + rel_vy**2 + rel_vz**2)  # Velocity penalty
             # -np.sqrt(ax**2 + ay**2 + az**2)  # Action penalty
             -np.sqrt(ax**2 + ay**2  + az**2 + aw**2)  # Action penalty
         )
 
         # Check if drone has landed safely
         contact_points = p.getContactPoints(self.drone, self.launch_pad)
-        if contact_points and abs(vx)  < 0.2 and abs(vy) < 0.2 and abs(vz) < 0.2:
+        if contact_points and abs(vx)  == 0 and abs(vy) == 0 and abs(vz) == 0:
             print("Landed")
             self.c = 10 * (1 - abs(ax)) + 10 * (1 - abs(ay)) + 10 * (1 - abs(az)) + 10 * (1 - abs(aw)) # Bonus for throttle tending to zero
             shaping +=  self.c
@@ -348,11 +370,29 @@ class BaseDroneController(gym.Env):
             plane_penalty -= 50
             self.crashed = True
 
-        if self.args.add_obstacles:
-            if any(p.getContactPoints(self.drone, obstacle) for obstacle in self.obstacles):
-                print("Hit an obstacle")
-                obstacle_penalty -= 50
+        if self._static_blocks_active:
+            for block in self.static_blocks:
+                if p.getContactPoints(self.drone, block):
+                    print("Hit static block")
+                    shaping -= 25
+                    self.crashed = True
+
+        if self._donut_obstacles_active:
+            for obs_obj in self.obstacles:
+                if p.getContactPoints(self.drone, obs_obj):
+                    print("Hit donut obstacle")
+                    shaping -= 50
+                    self.crashed = True 
+
+        if self._moving_blocks_active:
+            if self.first_moving_block is not None and p.getContactPoints(self.drone, self.first_moving_block):
+                print("Hit moving block")
+                shaping -= 50
                 self.crashed = True
+            if self.second_moving_block is not None and p.getContactPoints(self.drone, self.second_moving_block):
+                print("Hit moving block")
+                shaping -= 50
+                self.crashed = True       
 
         # Reward difference (temporal difference shaping)
         if self.previous_shaping is None:
@@ -374,7 +414,7 @@ class BaseDroneController(gym.Env):
         if abs(roll) < 0.5 and abs(pitch) < 0.5:
             reward += 0.5
 
-        reward = reward + obstacle_penalty + plane_penalty - tilt_penalty - spin_penalty
+        reward = reward + obstacle_penalty + plane_penalty - tilt_penalty - spin_penalty 
         return reward
     
     def _secondRewardFunction(self, observation, action):
@@ -423,12 +463,41 @@ class BaseDroneController(gym.Env):
         
         contact_points = p.getContactPoints(self.drone, self.launch_pad)
         if contact_points:
-            if np.all(np.abs(current_vel) < 0.1):
+            if np.all(np.abs(current_vel) == 0.0):
                 self.landed = True
-                reward += 11
+                reward += 100
             else:
+                self.crashed = True 
+
+        contact_points_plane = p.getContactPoints(self.drone, self.plane)
+        if contact_points_plane:
+            reward -= 50
+            self.crashed = True
+
+        if self._static_blocks_active:
+            for block in self.static_blocks:
+                if p.getContactPoints(self.drone, block):
+                    print("Hit static block")
+                    reward -= 25
+                    self.crashed = True
+
+        if self._donut_obstacles_active:
+            for obs_obj in self.obstacles:
+                if p.getContactPoints(self.drone, obs_obj):
+                    print("Hit donut obstacle")
+                    reward -= 50
+                    self.crashed = True 
+
+        if self._moving_blocks_active:
+            if self.first_moving_block is not None and p.getContactPoints(self.drone, self.first_moving_block):
+                print("Hit moving block")
+                reward -= 50
                 self.crashed = True
-        
+            if self.second_moving_block is not None and p.getContactPoints(self.drone, self.second_moving_block):
+                print("Hit moving block")
+                reward -= 50
+                self.crashed = True       
+
         return reward
     
     def _thirdRewardFunction(self, observation, action):
@@ -475,11 +544,40 @@ class BaseDroneController(gym.Env):
         # Check if the drone has landed safely
         contact_points = p.getContactPoints(self.drone, self.launch_pad)
         if contact_points:
-            if np.all(np.abs(current_vel) < 0.1):  # If the velocity is low
+            if np.all(np.abs(current_vel) == 0.0):  # If the velocity is low
                 self.landed = True
-                reward += 10  # Small bonus for successful landing
+                reward += 100  # Small bonus for successful landing
             else:
                 self.crashed = True
+
+        contact_points_plane = p.getContactPoints(self.drone, self.plane)
+        if contact_points_plane:
+            reward -= 50
+            self.crashed = True
+
+        if self._static_blocks_active:
+            for block in self.static_blocks:
+                if p.getContactPoints(self.drone, block):
+                    print("Hit static block")
+                    reward -= 25
+                    self.crashed = True
+
+        if self._donut_obstacles_active:
+            for obs_obj in self.obstacles:
+                if p.getContactPoints(self.drone, obs_obj):
+                    print("Hit donut obstacle")
+                    reward -= 50
+                    self.crashed = True 
+
+        if self._moving_blocks_active:
+            if self.first_moving_block is not None and p.getContactPoints(self.drone, self.first_moving_block):
+                print("Hit moving block")
+                reward -= 50
+                self.crashed = True
+            if self.second_moving_block is not None and p.getContactPoints(self.drone, self.second_moving_block):
+                print("Hit moving block")
+                reward -= 50
+                self.crashed = True  
 
         return reward
 
@@ -492,6 +590,23 @@ class BaseDroneController(gym.Env):
             return self._thirdRewardFunction(observation, action)
         else:
             raise ValueError("Invalid reward function selected.")
+        
+    def setWindEffects(self, flag: bool):
+        """Enable or diable wind effects."""
+        self._wind_effect_active = flag
+
+    def setStaticBlocks(self, flag: bool):
+        """Enable or disable static blocks."""
+        self._static_blocks_active = flag
+
+    def setDonutObstacles(self, flag: bool):
+        """Enable or disable donut obstacles."""
+        self._donut_obstacles_active = flag
+
+    def setMovingBlocks(self, flag: bool):
+        """Enable or disable moving blocks."""
+        self._moving_blocks_active = flag
+    
 
     def _isDone(self, observation):
         px, py, pz = observation[0:3]

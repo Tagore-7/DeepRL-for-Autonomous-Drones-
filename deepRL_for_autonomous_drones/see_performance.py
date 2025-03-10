@@ -10,7 +10,13 @@ from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControll
 # Initialize environment
 env = DroneControllerRPM()
 
-model = PPO.load(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'envs/logs_metrics_benchmark_tensorboard/best_model'), env=env, device='cpu')
+env.setWindEffects(True)
+env.setStaticBlocks(True)
+env.setDonutObstacles(True)
+env.setMovingBlocks(True)
+
+
+model = PPO.load(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'envs/logs_metrics_benchmark_tensorboard/PPO_3/drone_landing_model_using_ppo'), env=env, device='cpu')
 # model = PPO.load(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'envs/drone_landing_model_using_ppo'), env=env, device='cpu')
 
 # model = A2C.load(model_path, env=env, device='cpu')
