@@ -1,7 +1,8 @@
 import argparse
 import os 
 import gymnasium as gym
-from gymnasium.spaces import Box, Discrete
+from gymnasium.spaces import Box, Dict
+from gymnasium.wrappers import FlattenObservation
 import numpy as np
 import pybullet as p
 import pybullet_data
@@ -11,6 +12,7 @@ import xml.etree.ElementTree as ET
 import math
 import noise
 import multiprocessing
+import pkg_resources
 
 from stable_baselines3 import PPO, A2C, DDPG, TD3, SAC
 from sb3_contrib import ARS, CrossQ, TQC, TRPO
@@ -21,9 +23,8 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-from deepRL_for_autonomous_drones.envs.Base_Drone_Controller_RPM import BaseDroneController
-from deepRL_for_autonomous_drones.control.DSLPIDControl import DSLPIDControl
-from deepRL_for_autonomous_drones.utils.enums import DroneModel
+from deepRL_for_autonomous_drones.envs.Base_Drone_Controller import BaseDroneController
+from deepRL_for_autonomous_drones.utils.Custom_Callbacks import EpisodeRewardCallback, ToggleWindCallback, ToggleStaticBlocksCallback, ToggleDonutObstaclesCallback, ToggleMovingBlocksCallback, SaveModelCallback
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Benchmarking DeepRL algorithms for drone landing task')
@@ -65,7 +66,6 @@ args = parse_args()
 class DroneControllerRPM(BaseDroneController):
     def __init__(self):
         super(DroneControllerRPM, self).__init__(args=args)
-        # self.pid = DSLPIDControl(DroneModel.CF2X)
         self.enable_wind: bool = self.args.enable_wind
         self.reward_function = self.args.reward_function
 
@@ -81,9 +81,10 @@ class DroneControllerRPM(BaseDroneController):
 
         self.action_space = Box(low=act_lower_bound, high=act_upper_bound, dtype=np.float32)
         return self.action_space
-    
+
     def _observationSpace(self):
-        # ---- [x, y, z, roll, pitch, yaw, vx, vy, vz, wx, wy, wz] ---- #
+        #---- The drone state dimensions                           ----#
+        #---- [x, y, z, roll, pitch, yaw, vx, vy, vz, wx, wy, wz]  ----#
         lo = -np.inf
         hi = np.inf
         obs_lower_bound = np.array([lo, lo, lo, lo, lo, lo, lo, lo, lo, lo, lo, lo])
@@ -98,7 +99,22 @@ class DroneControllerRPM(BaseDroneController):
             obs_lower_bound = np.hstack([obs_lower_bound, np.array([act_lo,act_lo,act_lo,act_lo])])
             obs_upper_bound = np.hstack([obs_upper_bound, np.array([act_hi,act_hi,act_hi,act_hi])])
 
-        self.observation_space = Box(low=obs_lower_bound, high=obs_upper_bound, dtype=np.float32)
+        #---- LiDAR box space      ----#
+        #---- Normalized in [0, 1] ----#
+        lidar_dim = self.LIDAR_NUM_RAYS
+        lidar_low = np.zeros((lidar_dim,), dtype=np.float32)
+        lidar_high = np.ones((lidar_dim,), dtype=np.float32)
+
+        if self.add_obstacles:
+            self.observation_space = Dict({
+                "drone_state": Box(low=obs_lower_bound, high=obs_upper_bound, dtype=np.float32),
+                "lidar": Box(low=lidar_low, high=lidar_high, dtype=np.float32)
+            })
+        else:
+            self.observation_space = Dict({
+                "drone_state": Box(low=obs_lower_bound, high=obs_upper_bound, dtype=np.float32)
+            })
+
         return self.observation_space
 
     def _dragWind(self):
@@ -157,7 +173,6 @@ class DroneControllerRPM(BaseDroneController):
     def _preprocessAction(self, action):
         self.action_buffer.append(action)
         rpm = np.array(self.HOVER_RPM * (1+0.05*action))
-        # rpm = self._normalizedActionToRPM(action)
 
         return rpm
         
@@ -183,11 +198,10 @@ class DroneControllerRPM(BaseDroneController):
         )
   
     def step(self, action):
-        # p_s = self.rng.uniform(0, 1) # Probability for wind at each step
-        # if self.args.enable_wind == True and p_s < 0.3 and self.wind_active:
-        #     self._dragWind()
-
         clipped_action = np.reshape(self._preprocessAction(action), 4)
+
+        if self.PYB_STEPS_PER_CTRL > 1 and self.enable_ground_effect:
+            self._updateAndStoreKinematicInformation()
         for _ in range(self.PYB_STEPS_PER_CTRL):
             self._physics(clipped_action)
 
@@ -195,21 +209,20 @@ class DroneControllerRPM(BaseDroneController):
             p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-45, cameraTargetPosition=position)
             p.stepSimulation()
 
-            if self.args.enable_ground_effect:
+            if self.enable_ground_effect:
                 self._groundEffect(clipped_action)
 
             p_s = self.rng.uniform(0, 1) # Probability for wind at each step
-            if self.args.enable_wind and p_s < 0.3 and self.wind_active:
+            if self._wind_effect_active and p_s < 0.3:
                 self._dragWind()
 
             self.last_clipped_action = clipped_action
 
             if args.visual_mode.upper() == "GUI":
-                # time.sleep(self.time_step)
-                time.sleep(1/240)
+                time.sleep(self.time_step)
 
             # Update moving blocks on each simulation step.
-            if self._obstacles_active:
+            if self.add_obstacles and self._moving_blocks_active:
                 self._updateMovingBlocks() 
 
         #---- Update and store the drones kinematic information ----#
@@ -220,97 +233,70 @@ class DroneControllerRPM(BaseDroneController):
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
 
-        # self.step_counter += 1
         self.step_counter = self.step_counter + (1 * self.PYB_STEPS_PER_CTRL)
         return observation, reward, terminated, truncated, {}
-    
-    def _computeTerminated(self): 
+
+    def _computeTerminated(self):
         if self.landed:
-            return True
-
-        state = self._getDroneStateVector()
-        if (abs(state[7]) > 1.2 or abs(state[8]) > 1.2):
-            return True
-
-        if self.crashed:
-          return True
-
-        contact_with_plane = p.getContactPoints(self.drone, self.plane)
-        if contact_with_plane:
-            self.crashed = True
-            return True
-
-        if self.args.add_obstacles:
-            if any(p.getContactPoints(self.drone, obstacle) for obstacle in self.obstacles):
-                self.crashed = True
-                return True
-
-        if state[2] <= 0 or abs(state[0]) > self.boundary_limits or abs(state[1]) > self.boundary_limits or state[1] > self.boundary_limits:
-            self.crashed = True 
             return True
         
         return False
         
     def _computeTruncated(self):
-        if self.step_counter >= self.max_steps:
-          return True
+        state = self._getDroneStateVector()
         
-        return False
-
-class EpisodeRewardCallback(BaseCallback):
-    def __init__(self, verbose=1):
-        super(EpisodeRewardCallback, self).__init__(verbose)
-        self.episode_rewards = []
-
-    def _on_step(self) -> bool:
-        """
-        This function is called at every step during training.
-        """
-        # Get monitor information from SB3 environment
-        if "episode" in self.locals["infos"][0]:
-            ep_reward = self.locals["infos"][0]["episode"]["r"]
-            self.episode_rewards.append(ep_reward)
-            print(f"Episode Reward: {ep_reward:.2f}")
-
-        return True
-
-class ToggleObstaclesCallback(BaseCallback):
-    """
-    After `threshold` timesteps, toggle the environment's obstacle mode ON.
-    """
-    def __init__(self, threshold: int, enable_toggle: bool, verbose=0):
-        super(ToggleObstaclesCallback, self).__init__(verbose)
-        self.threshold = threshold
-        self.enable_toggle = enable_toggle
-        self.has_toggled = False
-
-    def _on_step(self) -> bool:
-        if not self.enable_toggle:
+        if self.crashed or self.step_counter >= self.max_steps:
+              return True
+        
+        contact_with_ground = p.getContactPoints(self.drone, self.plane)
+        if contact_with_ground:
+            self.crashed = True 
             return True
 
-        # self.model.num_timesteps is the total timesteps for the entire training,
-        # across all parallel environments.
-        if not self.has_toggled and self.model.num_timesteps >= self.threshold:
-            print(f"Toggling obstacles ON at timestep: {self.model.num_timesteps}")
-            # Turn obstacles on for all parallel sub-environments
-            self.training_env.env_method("setObstacleMode", True)
-            self.has_toggled = True
-        return True
+        if self._static_blocks_active and self.add_obstacles:
+            if any(p.getContactPoints(self.drone, block) for block in self.static_blocks):
+                self.crashed = True
+                return True
+
+        if self._donut_obstacles_active and self.add_obstacles:
+            if any(p.getContactPoints(self.drone, obs_obj) for obs_obj in self.obstacles):
+                self.crashed = True 
+                return True
+
+        if self._moving_blocks_active and self.add_obstacles:
+            if self.first_moving_block is not None and p.getContactPoints(self.drone, self.first_moving_block):
+                self.crashed = True
+                return True
+            if self.second_moving_block is not None and p.getContactPoints(self.drone, self.second_moving_block):
+                self.crashed = True
+                return True
+              
+        if state[2] <= 0 or abs(state[0]) > self.boundary_limits or abs(state[1]) > self.boundary_limits or state[1] > self.boundary_limits:
+              self.crashed = True 
+              return True
+        
+        return False
 
 def main():
     num_cpu = multiprocessing.cpu_count()
     print(f"Number of CPU cores available: {num_cpu}")
     if args.visual_mode.upper() == "GUI":
         num_cpu = 1
-        env = Monitor(DroneControllerRPM())
+        raw_env = Monitor(DroneControllerRPM())
+        env = FlattenObservation(raw_env)
     else: 
         num_cpu = multiprocessing.cpu_count()
+        def make_env():
+            env_ = DroneControllerRPM()
+            env_ = FlattenObservation(env_)
+            env_ = Monitor(env_)
+            return env_
         env = make_vec_env(
-          lambda: Monitor(DroneControllerRPM()),
-          n_envs=num_cpu,
-          vec_env_cls=SubprocVecEnv,
-          seed=42
-         )
+            make_env,
+            n_envs=num_cpu,
+            vec_env_cls=SubprocVecEnv,
+            seed=42
+        )
 
     tensorboard_log_dir = args.tensorboard_log_dir
     gamma_value = args.discount_factor
@@ -318,7 +304,21 @@ def main():
     
     #---- Custom callbacks ----#
     reward_callback = EpisodeRewardCallback()
-    toggle_callback = ToggleObstaclesCallback(threshold=3e6, enable_toggle=args.add_obstacles)
+    toggle_wind = ToggleWindCallback(threshold=int(10e6))
+    toggle_static = ToggleStaticBlocksCallback(threshold=int(20e6))
+    toggle_donuts = ToggleDonutObstaclesCallback(threshold=int(30e6))
+    toggle_moving = ToggleMovingBlocksCallback(threshold=int(40e6))
+
+    #---- Save models at specific timesteps ----#
+    save_thresholds = [10e6, 20e6, 30e6, 40e6, 50e6]
+    save_paths = [
+        "landing_model_10M", 
+        "landing_wind_model_wind_20M", 
+        "landing_wind_static_model_30M", 
+        "landing_wind_static_donuts_model_donuts_40M", 
+        "landing_wind_static_donuts_moving_model_50M"
+    ]
+    save_callback = SaveModelCallback(thresholds=save_thresholds, save_paths=save_paths)
 
     #---- Choose the model based on the algorithm name ----#
     if algorithm_name == "PPO":
@@ -360,16 +360,20 @@ def main():
             eval_freq=10000,
             verbose=1
         )
-        # model.learn(total_timesteps=5e6, callback=eval_callback, progress_bar=True)
-        model.learn(total_timesteps=10e6, callback=[eval_callback, reward_callback], progress_bar=True)
-        # model.learn(total_timesteps=10e6, callback=[eval_callback, toggle_callback], progress_bar=True)
-        # model.learn(
-        #     total_timesteps=10e6, 
-        #     callback=[eval_callback, reward_callback, toggle_callback], 
-        #     progress_bar=True
-        # )
+        # model.learn(total_timesteps=15e6, callback=eval_callback, progress_bar=True)
+        # model.learn(total_timesteps=5e6, callback=[eval_callback, reward_callback], progress_bar=True)
+        model.learn(
+            total_timesteps=50e6, 
+            callback=[eval_callback, reward_callback, toggle_wind, toggle_static, toggle_donuts, toggle_moving, save_callback], 
+            progress_bar=True
+        )
     else:
-        model.learn(total_timesteps=1e6, progress_bar=True)
+        # model.learn(total_timesteps=15e6, progress_bar=True)
+        model.learn(
+            total_timesteps=50e6, 
+            callback=[reward_callback, toggle_wind, toggle_static, toggle_donuts, toggle_moving, save_callback], 
+            progress_bar=True
+        )
     
     model.save(f"{args.model_name_to_save}")
     

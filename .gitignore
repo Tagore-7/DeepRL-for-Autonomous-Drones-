@@ -1,6 +1,7 @@
 *Zone.Identifier
 logs_metrics_benchmark_tensorboard
 *.zip
+.vscode
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
