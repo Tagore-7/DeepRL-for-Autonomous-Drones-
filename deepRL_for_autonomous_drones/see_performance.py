@@ -3,12 +3,19 @@ import time
 import numpy as np
 import pybullet as p
 import pkg_resources
+from gymnasium.wrappers import FlattenObservation
 from stable_baselines3 import PPO, A2C, DDPG, TD3, SAC
 from sb3_contrib import ARS, CrossQ, TQC, TRPO
 from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControllerRPM
 
 # Initialize environment
 env = DroneControllerRPM()
+env = FlattenObservation(env)
+
+env.setWindEffects(True)
+env.setStaticBlocks(True)
+env.setDonutObstacles(True)
+env.setMovingBlocks(True)
 
 model = PPO.load(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'envs/logs_metrics_benchmark_tensorboard/best_model'), env=env, device='cpu')
 # model = PPO.load(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'envs/drone_landing_model_using_ppo'), env=env, device='cpu')

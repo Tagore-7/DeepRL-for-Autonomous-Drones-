@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 import math
 import pkg_resources
 from collections import deque
+from deepRL_for_autonomous_drones.utils.Lidar import Lidar
 
 class BaseDroneController(gym.Env):
     def __init__(self, args):
@@ -26,12 +27,16 @@ class BaseDroneController(gym.Env):
         self.leg_contact_reward = self.args.leg_contact_reward
         self.gravity = self.args.gravity
         self.add_obstacles = self.args.add_obstacles
-        self.delayed_obstacles = self.args.add_obstacles
         self.enable_ground_effect = self.args.enable_ground_effect
         self.enable_wind = self.args.enable_wind
+        self.debug_axes = self.args.debug_axes
 
-        #---- Change this to False to delay obstacle activation ----#
-        self._obstacles_active = True
+        #---- Initialize curriculum-related flags (all start as OFF) ----#
+        self._obstacles_active = False
+        self._wind_effect_active = False
+        self._static_blocks_active = False
+        self._donut_obstacles_active = False
+        self._moving_blocks_active = False    
 
         #---- Constants ----#
         self.alpha = np.array([1.0, 1.0, 1.0])
@@ -39,6 +44,13 @@ class BaseDroneController(gym.Env):
         self.max_steps = 5000  # Maximum steps per episode
         self.urdf_path = "assets/cf2x.urdf"
         self.time_step = 1./240.
+
+        #---- LIDAR settings ----#
+        self.LIDAR_NUM_RAYS = 36 # Number of LIDAR rays
+        self.LIDAR_MAX_DISTANCE = 10 # Max distance in meters a LIDAR ray can detect obstacles
+        self.LIDAR_LINK_IDX = 4 # Index of the link from which the rays are emitted
+        self.OFFSET = 0
+        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
 
         self.RAD2DEG = 180/np.pi
         self.DEG2RAD = np.pi/180
@@ -117,9 +129,6 @@ class BaseDroneController(gym.Env):
         #---- Update and store the drones kinematic information ----#
         self._updateAndStoreKinematicInformation()
 
-        self.first_moving_block = 0
-        self.second_moving_block = 0
-
     # ---- Implement in Subclasses ---- #
     def _actionSpace(self):
         raise NotImplementedError
@@ -132,7 +141,7 @@ class BaseDroneController(gym.Env):
     def step(self, action):
         raise NotImplementedError
 
-    def reset(self, seed=None):
+    def reset(self, seed=None, options=None):
         # seed for reproducibility
         if seed is not None:
             random.seed(seed)
@@ -146,11 +155,6 @@ class BaseDroneController(gym.Env):
 
         return self._getObservation(), {}
 
-    def setObstacleMode(self, mode: bool):
-        #---- Toggle whether obstacles should be loaded on the next reset ---#
-        if self.delayed_obstacles:
-          self._obstacles_active = mode
-
     def _resetEnvironment(self):
         #---- Set PyBullet's parameters ----#
         p.resetSimulation()
@@ -161,14 +165,12 @@ class BaseDroneController(gym.Env):
         #---- Load ground plane, drone, launch pad, and obstacles models ----#
         self.plane = p.loadURDF("plane.urdf") 
         self.launch_pad = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/launch_pad.urdf'), self.launch_pad_position, useFixedBase=True)
-
         self.drone = self._loadDrone()
-        if self.add_obstacles and self._obstacles_active:
-          self.first_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'), basePosition=[0, 0, 1], useFixedBase=True)
-          self.second_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'), basePosition=[0, 0, 1], useFixedBase=True)
-          self.obstacles = self._loadObstacles()
-        else:
-          self.obstacles = []
+        #---- Load obstacles if active ----#
+        if self.add_obstacles:
+            self._loadStaticBlocks()
+            self._loadMovingBlocks()
+            self._loadTorusObstacles()
 
         #---- Debug local drone axes ----#
         if self.args.debug_axes and self.args.visual_mode.upper() == "GUI":
@@ -202,11 +204,6 @@ class BaseDroneController(gym.Env):
             self.wind_force = np.array([0.0, 0.0, 0.0])
 
     def _loadDrone(self):
-        # start_x = random.uniform(-13, 13)
-        # start_y = random.uniform(-13, 13)
-        # start_z = random.uniform(3, 13)
-        # drone = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/cf2x.urdf'), [start_x, start_y, start_z])
-
         #---- Tilt from vertical or horizontal ----#
         phi = self.rng.uniform(0, np.pi/2)
         theta = self.rng.uniform(0, 2*np.pi)
@@ -228,58 +225,6 @@ class BaseDroneController(gym.Env):
         drone = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/cf2x.urdf'), [start_x, start_y, start_z])
 
         return drone
-    
-    def _loadObstacles(self):
-        obstacles = []
-        donut_collision = p.createCollisionShape(
-            shapeType=p.GEOM_MESH,
-            fileName=pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/torus.obj'),
-            flags=p.GEOM_FORCE_CONCAVE_TRIMESH
-        )
-        donut_visual = p.createVisualShape(
-            shapeType=p.GEOM_MESH,
-            fileName=pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/torus.obj'),
-            rgbaColor=[1, 0, 0, 1]
-        )
-        donut_id_one = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=donut_collision, baseVisualShapeIndex=donut_visual, basePosition=[0,0,1], baseOrientation=[1, 1, 1, 1])
-        obstacles.append(donut_id_one)
-
-        donut_id_two = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=donut_collision, baseVisualShapeIndex=donut_visual, basePosition=[0,0,2], baseOrientation=[1, 1, 1, 1])
-        obstacles.append(donut_id_two)
-
-        # add four static blocks at four corners of the launch pad 
-        first_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[3, 3, 3], useFixedBase=True)
-        second_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[3, -3, 3], useFixedBase=True)
-        third_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[-3, 3, 3], useFixedBase=True)
-        fourth_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'), basePosition=[-3, -3, 3], useFixedBase=True)
-        obstacles.extend([first_block, second_block, third_block, fourth_block])
-
-        obstacles.extend([self.first_moving_block, self.second_moving_block])
-
-        return obstacles
-    
-    def _updateMovingBlocks(self):
-        """
-        Update the positions of the moving blocks so that they oscillate along a predefined axis.
-        The first moving block oscillates along the x-axis, and the second along the y-axis.
-        Their movement is determined by a sine function based on simulation time.
-        """
-        # Define amplitude and angular frequency.
-        amplitude = 3.0  # maximum displacement in meters
-        omega = 0.5      # angular frequency in rad/s
-
-        # Compute an approximate simulation time from the step counter.
-        current_time = self.step_counter * self.CTRL_TIMESTEP
-
-        # For the first moving block: oscillate along x-axis.
-        new_x = amplitude * np.sin(omega * current_time)
-        new_pos1 = [new_x, 0, 1]  # keep y=0 and fixed z = 1
-        p.resetBasePositionAndOrientation(self.first_moving_block, new_pos1, p.getQuaternionFromEuler([0, 0, 0]))
-
-        # For the second moving block: oscillate along y-axis at double speed.
-        new_y = amplitude * np.sin(2 * omega * current_time)
-        new_pos2 = [0, new_y, 1]  # keep x=0 and fixed z = 1
-        p.resetBasePositionAndOrientation(self.second_moving_block, new_pos2, p.getQuaternionFromEuler([0, 0, 0]))
     
     def _updateAndStoreKinematicInformation(self):
         """Updates and stores the drones kinemaatic information.
@@ -312,12 +257,45 @@ class BaseDroneController(gym.Env):
         #---- [13:16] Angular Velocity  ----#
         obs = self._getDroneStateVector()
         obs_12 = np.hstack([obs[0:3], obs[7:10], obs[10:13], obs[13:16]]).reshape(12,)
-        ret = np.array(obs_12).astype("float32")
+        drone_state = np.array(obs_12).astype("float32")
 
         #---- Add action buffer to observation ----#
         for i in range(self.ACTION_BUFFER_SIZE):
-            ret = np.hstack([ret, np.array(self.action_buffer[i])])
-        return ret
+            drone_state = np.hstack([drone_state, np.array(self.action_buffer[i])])
+
+        #---- Add LiDAR sensor readings to observation ----#
+        if self.add_obstacles:
+            lidar_results = self._getLidarSensorReadings()
+
+            #---- Convert each hit to a distance then normalize to [0,1] ----#
+            lidar_distances = np.array([res[2] * self.LIDAR_MAX_DISTANCE for res in lidar_results], dtype=np.float32)
+            normalized_lidar_dist = lidar_distances / self.LIDAR_MAX_DISTANCE
+            
+            return {
+                "drone_state": drone_state,
+                "lidar": normalized_lidar_dist
+            }
+        else:
+            return {
+                "drone_state": drone_state
+            }
+
+
+    def _getLidarSensorReadings(self):
+        lidar = Lidar()
+        lidar_position = p.getLinkState(self.drone, self.LIDAR_LINK_IDX)
+        ray_from_position = [lidar_position[0][0], lidar_position[0][1], lidar_position[0][2]]
+        lidar_orientation = list(p.getEulerFromQuaternion(lidar_position[1]))
+
+        lidar_hits = lidar.CheckHits(
+            ray_from_position, 
+            lidar_orientation, 
+            self.LIDAR_MAX_DISTANCE,
+            self.OFFSET, 
+            draw_debug_line=self.debug_axes
+        )
+
+        return lidar_hits
     
     def _firstRewardFunction(self, observation, action):
         """
@@ -331,21 +309,21 @@ class BaseDroneController(gym.Env):
         wx, wy, wz = obs[13:16]
         ax, ay, az, aw = action[0], action[1], action[2], action[3]  # Actions from the agent
 
-        obstacle_penalty = 0
         plane_penalty = 0
 
         rel_px, rel_py, rel_pz = np.array([px, py, pz]) - self.target_pos
+        rel_vx, rel_vy, rel_vz = np.array([vx, vy, vz]) - np.array([0, 0, 0])
 
         # Compute shaping reward
         shaping = (
             -100 * np.sqrt(rel_px**2 + rel_py**2 + rel_pz**2)  # Distance penalty
-            - 10 * np.sqrt(vx**2 + vy**2 + vz**2)  # Velocity penalty
-            -np.sqrt(ax**2 + ay**2  + az ** 2)  # Action penalty
+            - 10 * np.sqrt(rel_vx**2 + rel_vy**2 + rel_vz**2)  # Velocity penalty
+            -np.sqrt(ax**2 + ay**2  + az**2)  # Action penalty
         )
 
         # Check if drone has landed safely
         contact_points = p.getContactPoints(self.drone, self.launch_pad)
-        if contact_points and abs(vx)  < 0.1 and abs(vy) < 0.1 and abs(vz) < 0.1:
+        if contact_points and abs(vx) == 0 and abs(vy) == 0 and abs(vz) == 0:
             print("Landed")
             self.c = 10 * (1 - abs(ax)) + 10 * (1 - abs(ay)) + 10 * (1 - abs(az)) + 10 * (1 - abs(aw)) # Bonus for throttle tending to zero
             shaping +=  self.c
@@ -356,14 +334,10 @@ class BaseDroneController(gym.Env):
 
         contact_points_plane = p.getContactPoints(self.drone, self.plane)
         if contact_points_plane:
-            plane_penalty -= 100
+            plane_penalty -= 50
             self.crashed = True
 
-        if self.args.add_obstacles:
-            if any(p.getContactPoints(self.drone, obstacle) for obstacle in self.obstacles):
-                print("Hit an obstacle")
-                obstacle_penalty -= 50
-                self.crashed = True
+        shaping += self._obstacleRewardShaping() 
 
         # Reward difference (temporal difference shaping)
         if self.previous_shaping is None:
@@ -385,9 +359,7 @@ class BaseDroneController(gym.Env):
         if abs(roll) < 0.5 and abs(pitch) < 0.5:
             reward += 0.05
 
-        reward = reward + obstacle_penalty + plane_penalty - tilt_penalty - spin_penalty
-        # print(reward)
-
+        reward = reward + plane_penalty - tilt_penalty - spin_penalty
         return reward
     
     def _secondRewardFunction(self, observation, action):
@@ -439,13 +411,20 @@ class BaseDroneController(gym.Env):
         
         contact_points = p.getContactPoints(self.drone, self.launch_pad)
         if contact_points:
-            if np.all(np.abs(current_vel) < 0.1):
+            if np.all(np.abs(current_vel) == 0.0):
                 self.landed = True
-                reward += 11
+                reward += 100
             else:
-                self.crashed = True
-        
-        return reward
+                self.crashed = True 
+
+        contact_points_plane = p.getContactPoints(self.drone, self.plane)
+        if contact_points_plane:
+            reward -= 50
+            self.crashed = True
+
+        obstacle_penalty = self._obstacleRewardShaping()          
+
+        return reward + obstacle_penalty
     
     def _thirdRewardFunction(self, observation, action):
         """
@@ -494,13 +473,20 @@ class BaseDroneController(gym.Env):
         # Check if the drone has landed safely
         contact_points = p.getContactPoints(self.drone, self.launch_pad)
         if contact_points:
-            if np.all(np.abs(current_vel) < 0.1):  # If the velocity is low
+            if np.all(np.abs(current_vel) == 0.0):  # If the velocity is low
                 self.landed = True
-                reward += 10  # Small bonus for successful landing
+                reward += 100  # Small bonus for successful landing
             else:
                 self.crashed = True
 
-        return reward
+        contact_points_plane = p.getContactPoints(self.drone, self.plane)
+        if contact_points_plane:
+            reward -= 50
+            self.crashed = True
+
+        obstacle_penalty = self._obstacleRewardShaping()  
+
+        return reward + obstacle_penalty
 
     def _computeReward(self, observation, action, reward_function):
         if reward_function == 1:
@@ -511,28 +497,115 @@ class BaseDroneController(gym.Env):
             return self._thirdRewardFunction(observation, action)
         else:
             raise ValueError("Invalid reward function selected.")
+        
+    def _obstacleRewardShaping(self):
+        reward = 0
 
-    def _isDone(self, observation):
-        px, py, pz = observation[0:3]
-
-        if self.landed or self.crashed:
-            return True
-
-        contact_with_ground = p.getContactPoints(self.drone, self.plane)
-        if contact_with_ground:
-            self.crashed = True 
-            return True
-
-        if self.add_obstacles:
-            if any(p.getContactPoints(self.drone, obstacle) for obstacle in self.obstacles):
+        if self._static_blocks_active and self.add_obstacles:
+            if any(p.getContactPoints(self.drone, block) for block in self.static_blocks):
+                print("Hit static block")
+                reward -= 25
                 self.crashed = True
-                return True
 
-        if pz <= 0 or abs(px) > self.boundary_limits or abs(py) > self.boundary_limits or pz > self.boundary_limits:
-            self.crashed = True 
-            return True
+        if self._donut_obstacles_active and self.add_obstacles:
+            if any(p.getContactPoints(self.drone, obs_obj) for obs_obj in self.obstacles):
+                print("Hit donut obstacle")
+                reward -= 50
+                self.crashed = True
 
-        return False
+        if self._moving_blocks_active and self.add_obstacles:
+            if self.first_moving_block is not None and p.getContactPoints(self.drone, self.first_moving_block):
+                print("Hit moving block")
+                reward -= 50
+                self.crashed = True
+            if self.second_moving_block is not None and p.getContactPoints(self.drone, self.second_moving_block):
+                print("Hit moving block")
+                reward -= 50
+                self.crashed = True
+
+        return reward
+        
+    def _loadStaticBlocks(self):
+        self.static_blocks = []
+        if self._static_blocks_active and self.add_obstacles:
+            self.static_blocks.append(p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'),
+                                                basePosition=[3, 3, 3], useFixedBase=True))
+            self.static_blocks.append(p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'),
+                                                basePosition=[3, -3, 3], useFixedBase=True))
+            self.static_blocks.append(p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'),
+                                                basePosition=[-3, 3, 3], useFixedBase=True))
+            self.static_blocks.append(p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/static_blocks.urdf'),
+                                                basePosition=[-3, -3, 3], useFixedBase=True))
+            
+    def _loadMovingBlocks(self):
+        self.first_moving_block = None
+        self.second_moving_block = None
+        if self._moving_blocks_active and self.add_obstacles:
+            self.first_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'),
+                                                basePosition=[0, 0, 1], useFixedBase=True)
+            self.second_moving_block = p.loadURDF(pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/moving_blocks.urdf'),
+                                                basePosition=[0, 0, 1], useFixedBase=True)
+    
+    def _loadTorusObstacles(self):
+        self.obstacles = []
+        if self._donut_obstacles_active and self.add_obstacles:
+            donut_collision = p.createCollisionShape(
+            shapeType=p.GEOM_MESH,
+            fileName=pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/torus.obj'),
+            flags=p.GEOM_FORCE_CONCAVE_TRIMESH
+            )
+            donut_visual = p.createVisualShape(
+                shapeType=p.GEOM_MESH,
+                fileName=pkg_resources.resource_filename('deepRL_for_autonomous_drones', 'assets/torus.obj'),
+                rgbaColor=[1, 0, 0, 1]
+            )
+            donut_id_one = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=donut_collision, baseVisualShapeIndex=donut_visual, basePosition=[0,0,1], baseOrientation=[1, 1, 1, 1])
+            self.obstacles.append(donut_id_one)
+
+            donut_id_two = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=donut_collision, baseVisualShapeIndex=donut_visual, basePosition=[0,0,2], baseOrientation=[1, 1, 1, 1])
+            self.obstacles.append(donut_id_two)
+    
+    def _updateMovingBlocks(self):
+        """
+        Update the positions of the moving blocks so that they oscillate along a predefined axis.
+        The first moving block oscillates along the x-axis, and the second along the y-axis.
+        Their movement is determined by a sine function based on simulation time.
+        """
+        if self.first_moving_block is None or self.second_moving_block is None:
+            return
+
+        # Define amplitude and angular frequency.
+        amplitude = 3.0  # maximum displacement in meters
+        omega = 0.2      # angular frequency in rad/s
+
+        # Compute an approximate simulation time from the step counter.
+        current_time = self.step_counter * self.CTRL_TIMESTEP
+
+        # For the first moving block: oscillate along x-axis.
+        new_x = amplitude * np.sin(omega * current_time)
+        new_pos1 = [new_x, 0, 1]  # keep y=0 and fixed z = 1
+        p.resetBasePositionAndOrientation(self.first_moving_block, new_pos1, p.getQuaternionFromEuler([0, 0, 0]))
+
+        # For the second moving block: oscillate along y-axis at double speed.
+        new_y = amplitude * np.sin(2 * omega * current_time)
+        new_pos2 = [0, new_y, 1]  # keep x=0 and fixed z = 1
+        p.resetBasePositionAndOrientation(self.second_moving_block, new_pos2, p.getQuaternionFromEuler([0, 0, 0]))
+
+    def setWindEffects(self, flag: bool):
+        """Enable or diable wind effects."""
+        self._wind_effect_active = flag
+
+    def setStaticBlocks(self, flag: bool):
+        """Enable or disable static blocks."""
+        self._static_blocks_active = flag
+
+    def setDonutObstacles(self, flag: bool):
+        """Enable or disable donut obstacles."""
+        self._donut_obstacles_active = flag
+
+    def setMovingBlocks(self, flag: bool):
+        """Enable or disable moving blocks."""
+        self._moving_blocks_active = flag
 
     def close(self):
         p.disconnect()
