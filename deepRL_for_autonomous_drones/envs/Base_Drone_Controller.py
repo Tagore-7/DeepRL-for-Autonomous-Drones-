@@ -349,7 +349,7 @@ class BaseDroneController(gym.Env):
 
     def _getCameraImage(self):
         """Capture RGB image from drone's perspective."""
-        pos, orn = p.getBasePositionAndOrientation(self.drone)
+        pos, orn = p.getBasePositionAndOrientation(self.drone.getDroneID())
         rot = np.array(p.getMatrixFromQuaternion(orn)).reshape(3, 3)
 
         # Camera position 0.1m in front of the drone
