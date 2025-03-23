@@ -30,6 +30,19 @@ class ToggleWindCallback(BaseCallback):
             self.has_toggled = True
         return True
     
+class ToggleTreesCallback(BaseCallback):
+    def __init__(self, threshold: int, verbose=0):
+        super(ToggleTreesCallback, self).__init__(verbose)
+        self.threshold = threshold
+        self.has_toggled = False
+
+    def _on_step(self) -> bool:
+        if not self.has_toggled and self.model.num_timesteps >= self.threshold:
+            print(f"Enabling trees at timestep: {self.model.num_timesteps}")
+            self.training_env.env_method("setTreesFlag", True)
+            self.has_toggled = True
+        return True
+    
 class ToggleStaticBlocksCallback(BaseCallback):
     def __init__(self, threshold: int, verbose=0):
         super(ToggleStaticBlocksCallback, self).__init__(verbose)
@@ -82,4 +95,26 @@ class ToggleDonutObstaclesCallback(BaseCallback):
             print(f"Enabling donut obstacles at timestep: {self.model.num_timesteps}")
             self.training_env.env_method("setDonutObstacles", True)
             self.has_toggled = True
+        return True
+    
+class VecNormalizeSaverCallback(BaseCallback):
+    """
+    Callback that saves the VecNormalize statistics (running mean/var)
+    every `save_freq` training steps.
+    """
+    def __init__(self, save_freq: int, save_path: str, verbose: int = 1):
+        super().__init__(verbose)
+        self.save_freq = save_freq
+        self.save_path = save_path
+
+    def _on_step(self) -> bool:
+        # Check if it's time to save
+        if self.n_calls % self.save_freq == 0:
+            # Retrieve the VecNormalize object
+            vec_normalize_env = self.model.get_vec_normalize_env()
+            # If it exists, save the statistics
+            if vec_normalize_env is not None:
+                vec_normalize_env.save(self.save_path)
+                if self.verbose > 0:
+                    print(f"Saved VecNormalize stats to {self.save_path} at step {self.n_calls}")
         return True

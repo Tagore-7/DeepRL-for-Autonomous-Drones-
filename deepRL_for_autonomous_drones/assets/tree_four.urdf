@@ -1,0 +1,33 @@
+<?xml version="1.0" ?>
+<robot name="tree_one">
+    <link name="block">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.0"/>
+      <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/>
+    </inertial>
+    <!-- Visual representation of the cube (0.3m x 0.3m x 0.3m) -->
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.4 0.4 6.0"/>
+      </geometry>
+      <material name="green">
+        <color rgba="0 1 0 1"/>
+      </material>
+    </visual>
+    <!-- Collision representation of the cube (0.3m x 0.3m x 0.3m) -->
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.4 0.4 6.0"/>
+      </geometry>
+    </collision>    
+    <!-- Contact properties (optional, e.g., friction) --> 
+    <contact>
+      <lateral_friction value="1.0"/>
+      <rolling_friction value="0.0"/>
+      <restitution value="0.0"/>
+    </contact>
+  </link>
+</robot>  
