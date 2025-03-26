@@ -1,5 +1,6 @@
 from stable_baselines3.common.callbacks import BaseCallback
 
+
 class EpisodeRewardCallback(BaseCallback):
     def __init__(self, verbose=1):
         super(EpisodeRewardCallback, self).__init__(verbose)
@@ -16,7 +17,8 @@ class EpisodeRewardCallback(BaseCallback):
             print(f"Episode Reward: {ep_reward:.2f}")
 
         return True
-    
+
+
 class ToggleWindCallback(BaseCallback):
     def __init__(self, threshold: int, verbose=0):
         super(ToggleWindCallback, self).__init__(verbose)
@@ -29,7 +31,8 @@ class ToggleWindCallback(BaseCallback):
             self.training_env.env_method("setWindEffects", True)
             self.has_toggled = True
         return True
-    
+
+
 class ToggleTreesCallback(BaseCallback):
     def __init__(self, threshold: int, verbose=0):
         super(ToggleTreesCallback, self).__init__(verbose)
@@ -42,7 +45,8 @@ class ToggleTreesCallback(BaseCallback):
             self.training_env.env_method("setTreesFlag", True)
             self.has_toggled = True
         return True
-    
+
+
 class ToggleStaticBlocksCallback(BaseCallback):
     def __init__(self, threshold: int, verbose=0):
         super(ToggleStaticBlocksCallback, self).__init__(verbose)
@@ -55,7 +59,8 @@ class ToggleStaticBlocksCallback(BaseCallback):
             self.training_env.env_method("setStaticBlocks", True)
             self.has_toggled = True
         return True
-    
+
+
 class ToggleMovingBlocksCallback(BaseCallback):
     def __init__(self, threshold: int, verbose=0):
         super(ToggleMovingBlocksCallback, self).__init__(verbose)
@@ -68,7 +73,8 @@ class ToggleMovingBlocksCallback(BaseCallback):
             self.training_env.env_method("setMovingBlocks", True)
             self.has_toggled = True
         return True
-    
+
+
 class SaveModelCallback(BaseCallback):
     def __init__(self, thresholds, save_paths, verbose=1):
         super(SaveModelCallback, self).__init__(verbose)
@@ -83,7 +89,8 @@ class SaveModelCallback(BaseCallback):
                 print(f"Saved model at {threshold} timesteps to {self.save_paths[i]}")
                 self.saved[i] = True
         return True
-    
+
+
 class ToggleDonutObstaclesCallback(BaseCallback):
     def __init__(self, threshold: int, verbose=0):
         super(ToggleDonutObstaclesCallback, self).__init__(verbose)
@@ -96,12 +103,14 @@ class ToggleDonutObstaclesCallback(BaseCallback):
             self.training_env.env_method("setDonutObstacles", True)
             self.has_toggled = True
         return True
-    
+
+
 class VecNormalizeSaverCallback(BaseCallback):
     """
     Callback that saves the VecNormalize statistics (running mean/var)
     every `save_freq` training steps.
     """
+
     def __init__(self, save_freq: int, save_path: str, verbose: int = 1):
         super().__init__(verbose)
         self.save_freq = save_freq

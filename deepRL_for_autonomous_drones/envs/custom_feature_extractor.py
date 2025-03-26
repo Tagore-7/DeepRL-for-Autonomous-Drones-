@@ -39,7 +39,9 @@ class CustomFeatureExtractor(BaseFeaturesExtractor):
                 rgb_space = observation_space["rgb"]
                 # CNN for RGB images
                 extractors["rgb"] = NatureCNN(
-                    rgb_space, features_dim=self.rgb_features_dim, normalized_image=True
+                    rgb_space,
+                    features_dim=self.rgb_features_dim,
+                    normalized_image=False,
                 )
                 total_concat_size += self.rgb_features_dim
 
