@@ -62,6 +62,9 @@ class BaseDroneController(gym.Env):
         #     self._wind_effect_active = False
         #     self._trees_active = False
 
+        #wind force
+        self.wind_force = np.array([0.0, 0.0, 0.0])
+
         # ---- Constants ----#
         self.alpha = np.array([1.0, 1.0, 1.0])
         self.beta = np.array([1.0, 1.0, 1.0])

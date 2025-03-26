@@ -129,7 +129,7 @@ env = DroneControllerRPM(args)
 model = PPO.load(
     pkg_resources.resource_filename(
         "deepRL_for_autonomous_drones",
-        "envs/logs_metrics_benchmark_tensorboard/best_model",
+        "envs/logs_metrics_benchmark_tensorboard/PPO_12/drone_landing_model_using_ppo",
     ),
     env=env,
     device="cpu",

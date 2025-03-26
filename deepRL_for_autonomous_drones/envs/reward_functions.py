@@ -4,7 +4,7 @@ import numpy as np
 
 def firstRewardFunction(env, observation, action):
     """
-    Computes the reward function based on the author's paper: oward end-to-end control for UAV autonomous landing via deep reinforcement learning,
+    Computes the reward function based on the author's paper: Towards end-to-end control for UAV autonomous landing via deep reinforcement learning,
 
     """
     obs = env.drone.getDroneStateVector()
@@ -19,7 +19,7 @@ def firstRewardFunction(env, observation, action):
         action[3],
     )  # Actions from the agent
 
-    obstacle_penalty = 0
+    # obstacle_penalty = 0
     plane_penalty = 0
 
     rel_pos = np.array([px, py, pz]) - env.target_pos
@@ -77,7 +77,7 @@ def firstRewardFunction(env, observation, action):
     reward = shaping if env.previous_shaping is None else shaping - env.previous_shaping
     env.previous_shaping = shaping
 
-    reward = reward + obstacle_penalty + plane_penalty
+    reward = reward  + plane_penalty
     return reward
 
 
