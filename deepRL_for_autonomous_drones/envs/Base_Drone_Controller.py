@@ -384,10 +384,9 @@ class BaseDroneController(gym.Env):
             ),
         )
 
-        # process and normalize the image
-        rgb_array = np.array(rgb)[:, :, :3]  # Remove alpha channel
-        rgb_array = rgb_array.astype(np.float32) * 255.0  # Normalize
+        rgb_array = np.array(rgb, dtype=np.uint8)[:, :, :3]  # Remove alpha channel
         rgb_array = np.transpose(rgb_array, (2, 0, 1))  # Transpose to (C, H, W)
+        rgb_array = rgb_array.astype(np.uint8)
         return rgb_array
 
     def _computeReward(self, observation, action, reward_function):
@@ -414,14 +413,27 @@ class BaseDroneController(gym.Env):
             # ---- Set a fixed random seed to ensure consistency ----#
             rng = np.random.default_rng(seed=42)
 
-            # ---- Generate deterministic positions (evenly spaced grid) ----#
-            self.fixed_tree_positions = [
-                (x, y, 0)
-                for x, y in itertools.product(range(-5, 6, 2), repeat=2)
-                if (x, y) != (0, 0)
-            ]
+            num_trees = 50
+            min_distance_from_pad = 1.0
+            spawn_range = (-5, 5)
 
-            # ---- Assign fixed tree types ----#
+            # ---- Generate fixed tree positions with some randomness ----#
+            if not hasattr(self, "fixed_tree_positions"):
+                self.fixed_tree_positions = []
+                attempts = 0
+                while len(self.fixed_tree_positions) < num_trees and attempts < 1000:
+                    x = rng.uniform(*spawn_range)
+                    y = rng.uniform(*spawn_range)
+
+                    # ---- Keep trees away from launch pad ----#
+                    if np.linalg.norm([x, y]) < min_distance_from_pad:
+                        attempts += 1
+                        continue
+
+                    self.fixed_tree_positions.append((x, y, 0))
+                    attempts += 1
+
+            # ---- Assign fixed tree types (random but consistent due to fixed seed) ----#
             if not hasattr(self, "fixed_tree_types"):
                 self.fixed_tree_types = [
                     tree_options[rng.integers(0, len(tree_options))]
@@ -429,37 +441,6 @@ class BaseDroneController(gym.Env):
                 ]
 
             self.trees = generateStaticTrees(self.fixed_tree_positions, self.fixed_tree_types)
-
-    # def _generateStaticTrees(self):
-    #     """Generates an area of trees, of various sizes, around the launch pad."""
-    #     self.trees = []
-    #     if self._trees_active and self.add_obstacles:
-    #         tree_options = [
-    #             "assets/tree_one.urdf",
-    #             "assets/tree_two.urdf",
-    #             "assets/tree_three.urdf",
-    #             "assets/tree_four.urdf",
-    #             "assets/tree_five.urdf",
-    #         ]
-
-    #         self.fixed_tree_positions = getFixedTreePositions()
-
-    #         # ---- Select tree types for each fixed position (same for entire training) ----#
-    #         if not hasattr(self, "fixed_tree_types"):
-    #             self.fixed_tree_types = []
-    #             for i in range(61):
-    #                 if i % 5 == 0:
-    #                     self.fixed_tree_types.append(tree_options[4])
-    #                 elif i % 4 == 0:
-    #                     self.fixed_tree_types.append(tree_options[3])
-    #                 if i % 3 == 0:
-    #                     self.fixed_tree_types.append(tree_options[2])
-    #                 if i % 2 == 0:
-    #                     self.fixed_tree_types.append(tree_options[1])
-    #                 else:
-    #                     self.fixed_tree_types.append(tree_options[0])
-
-    #         self.trees = generateStaticTrees(self.fixed_tree_positions, self.fixed_tree_types)
 
     def _loadStaticBlocks(self):
         self.static_blocks = []
