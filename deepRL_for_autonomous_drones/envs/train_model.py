@@ -200,10 +200,18 @@ def main():
             if args.enable_curriculum_learning
             else ToggleTreesCallback(threshold=int(0))
         )
-        save_thresholds = [5e6, 10e6]
+        save_thresholds = [5e6, 6e6, 7e6, 8e6, 9e6, 10e6, 11e6, 12e6, 13e6, 14e6]
         save_paths = [
             "landing_model_5M",
-            "landing_model_trees_10M",
+            "landing_model_6M",
+            "landing_model_7M",
+            "landing_model_8M",
+            "landing_model_9M",
+            "landing_model_10M",
+            "landing_model_11M",
+            "landing_model_12M",
+            "landing_model_13M",
+            "landing_model_14M",
         ]
         save_callback = SaveModelCallback(thresholds=save_thresholds, save_paths=save_paths)
 

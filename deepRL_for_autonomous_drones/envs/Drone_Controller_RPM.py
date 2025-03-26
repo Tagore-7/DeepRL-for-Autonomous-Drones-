@@ -110,7 +110,7 @@ class DroneControllerRPM(BaseDroneController):
                 {
                     "state": state_space,
                     "lidar": Box(low=lidar_low, high=lidar_high, dtype=np.float32),
-                    "rgb": Box(low=0.0, high=1.0, shape=self.rgb_obs_shape, dtype=np.float32),
+                    "rgb": Box(low=0, high=255, shape=self.rgb_obs_shape, dtype=np.uint8),
                 }
             )
         else:
