@@ -62,7 +62,7 @@ class BaseDroneController(gym.Env):
         #     self._wind_effect_active = False
         #     self._trees_active = False
 
-        #wind force
+        # wind force
         self.wind_force = np.array([0.0, 0.0, 0.0])
 
         # ---- Constants ----#
@@ -104,13 +104,9 @@ class BaseDroneController(gym.Env):
         self.Z_AX = -1 * np.ones(1)
 
         self.NORMALIZED_RL_ACTION_SPACE = True
-        self.current_raw_action = (
-            None  # Action sent by controller, possibly normalized and unclipped
-        )
+        self.current_raw_action = None  # Action sent by controller, possibly normalized and unclipped
         self.current_physical_action = None  # current_raw_action unnormalized if it was normalized
-        self.current_clipped_action = (
-            None  # current_noisy_physical_action clipped to physical action bounds
-        )
+        self.current_clipped_action = None  # current_noisy_physical_action clipped to physical action bounds
         self.initial_reset = False
         self.at_reset = False
 
@@ -157,9 +153,7 @@ class BaseDroneController(gym.Env):
     def _checkInitialReset(self):
         """Makes sure that .reset() is called at least once before .step()."""
         if not self.initial_reset:
-            raise RuntimeError(
-                "[ERROR] You must call env.reset() at least once before using env.step()."
-            )
+            raise RuntimeError("[ERROR] You must call env.reset() at least once before using env.step().")
 
     def before_reset(self):
         """Pre-processing before calling `.reset()`."""
@@ -244,9 +238,7 @@ class BaseDroneController(gym.Env):
         # ---- Load ground plane, drone, launch pad, and obstacles models ----#
         self.plane = p.loadURDF("plane.urdf")
         self.launch_pad = p.loadURDF(
-            pkg_resources.resource_filename(
-                "deepRL_for_autonomous_drones", "assets/launch_pad.urdf"
-            ),
+            pkg_resources.resource_filename("deepRL_for_autonomous_drones", "assets/launch_pad.urdf"),
             self.launch_pad_position,
             useFixedBase=True,
         )
@@ -377,11 +369,7 @@ class BaseDroneController(gym.Env):
             height=self.camera_height,
             viewMatrix=view_matrix,
             projectionMatrix=proj_matrix,
-            renderer=(
-                p.ER_BULLET_HARDWARE_OPENGL
-                if self.args.visual_mode.upper() == "GUI"
-                else p.ER_TINY_RENDERER
-            ),
+            renderer=(p.ER_BULLET_HARDWARE_OPENGL if self.args.visual_mode.upper() == "GUI" else p.ER_TINY_RENDERER),
         )
 
         rgb_array = np.array(rgb, dtype=np.uint8)[:, :, :3]  # Remove alpha channel
@@ -392,9 +380,7 @@ class BaseDroneController(gym.Env):
     def _computeReward(self, observation, action, reward_function):
         """Calls the selected reward function and computes it."""
         if reward_function not in reward_functions:
-            print(
-                f"[WARNING] Invalid reward function '{reward_function}' selected. Using default: 1"
-            )
+            print(f"[WARNING] Invalid reward function '{reward_function}' selected. Using default: 1")
             reward_function = 1
 
         return reward_functions[reward_function](self, observation, action)
@@ -435,10 +421,7 @@ class BaseDroneController(gym.Env):
 
             # ---- Assign fixed tree types (random but consistent due to fixed seed) ----#
             if not hasattr(self, "fixed_tree_types"):
-                self.fixed_tree_types = [
-                    tree_options[rng.integers(0, len(tree_options))]
-                    for _ in self.fixed_tree_positions
-                ]
+                self.fixed_tree_types = [tree_options[rng.integers(0, len(tree_options))] for _ in self.fixed_tree_positions]
 
             self.trees = generateStaticTrees(self.fixed_tree_positions, self.fixed_tree_types)
 
@@ -477,16 +460,12 @@ class BaseDroneController(gym.Env):
         # For the first moving block: oscillate along x-axis.
         new_x = amplitude * np.sin(omega * current_time)
         new_pos1 = [new_x, 0, 1]  # keep y=0 and fixed z = 1
-        p.resetBasePositionAndOrientation(
-            self.first_moving_block, new_pos1, p.getQuaternionFromEuler([0, 0, 0])
-        )
+        p.resetBasePositionAndOrientation(self.first_moving_block, new_pos1, p.getQuaternionFromEuler([0, 0, 0]))
 
         # For the second moving block: oscillate along y-axis at double speed.
         new_y = amplitude * np.sin(2 * omega * current_time)
         new_pos2 = [0, new_y, 1]  # keep x=0 and fixed z = 1
-        p.resetBasePositionAndOrientation(
-            self.second_moving_block, new_pos2, p.getQuaternionFromEuler([0, 0, 0])
-        )
+        p.resetBasePositionAndOrientation(self.second_moving_block, new_pos2, p.getQuaternionFromEuler([0, 0, 0]))
 
     def setWindEffects(self, flag: bool):
         """Enable or diable wind effects."""
@@ -517,7 +496,7 @@ class BaseDroneController(gym.Env):
             lineFromXYZ=[0, 0, 0],
             lineToXYZ=[AXIS_LENGTH, 0, 0],
             lineColorRGB=[1, 0, 0],
-            parentObjectUniqueId=self.drone,
+            parentObjectUniqueId=self.drone.getDroneID(),
             parentLinkIndex=-1,
             replaceItemUniqueId=int(self.X_AX),
         )
@@ -525,7 +504,7 @@ class BaseDroneController(gym.Env):
             lineFromXYZ=[0, 0, 0],
             lineToXYZ=[0, AXIS_LENGTH, 0],
             lineColorRGB=[0, 1, 0],
-            parentObjectUniqueId=self.drone,
+            parentObjectUniqueId=self.drone.getDroneID(),
             parentLinkIndex=-1,
             replaceItemUniqueId=int(self.Y_AX),
         )
@@ -533,7 +512,7 @@ class BaseDroneController(gym.Env):
             lineFromXYZ=[0, 0, 0],
             lineToXYZ=[0, 0, AXIS_LENGTH],
             lineColorRGB=[0, 0, 1],
-            parentObjectUniqueId=self.drone,
+            parentObjectUniqueId=self.drone.getDroneID(),
             parentLinkIndex=-1,
             replaceItemUniqueId=int(self.Z_AX),
         )
