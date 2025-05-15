@@ -1,5 +1,9 @@
 *Zone.Identifier
 logs_metrics_benchmark_tensorboard
+env_logs
+logs
+wandb
+benchmark_results
 *.zip
 .vscode
 

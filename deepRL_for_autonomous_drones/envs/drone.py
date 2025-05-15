@@ -1,7 +1,9 @@
 # import math
 # import random
 from collections import deque
-import pkg_resources
+
+# import pkg_resources
+from importlib.resources import files
 import numpy as np
 import pybullet as p
 from deepRL_for_autonomous_drones.utils.drone_urdf_parser import parseURDFParameters
@@ -10,18 +12,20 @@ from deepRL_for_autonomous_drones.utils.drone_urdf_parser import parseURDFParame
 class Drone(object):
     def __init__(
         self,
+        bullet_client,
         rng=None,
         launch_pad_position=None,
         gravity=-9.81,
         ctrl_freq=30,
-        pyb_client=p,
+        # pyb_client=p,
         normalized_rl_action_space=True,
     ):
+        self._p = bullet_client
         self.rng = rng
         self.launch_pad_position = launch_pad_position
         self.gravity = gravity
         self.CTRL_FREQ = ctrl_freq
-        self.pyb_client = pyb_client
+        # self.pyb_client = pyb_client
         self.NORMALIZED_RL_ACTION_SPACE = normalized_rl_action_space
 
         # ---- Load drone properties from the .urdf file ---- #
@@ -44,6 +48,7 @@ class Drone(object):
             self.DW_COEFF_2,
             self.DW_COEFF_3,
         ) = parseURDFParameters("assets/cf2x.urdf")
+        # ) = parseURDFParameters("assets/cf21x_bullet.urdf")
 
         # ---- Compute constants ----#
         self.G = -self.gravity * self.MASS
@@ -53,11 +58,7 @@ class Drone(object):
         self.MAX_XY_TORQUE = (2 * self.ARM * self.KF * self.MAX_RPM**2) / np.sqrt(2)
         self.MAX_Z_TORQUE = 2 * self.KM * self.MAX_RPM**2
         self.HOVER_THRUST = 9.81 * self.MASS / 4  # Gravity compensation per motor
-        self.GND_EFF_H_CLIP = (
-            0.25
-            * self.PROP_RADIUS
-            * np.sqrt((15 * self.MAX_RPM**2 * self.KF * self.GND_EFF_COEFF) / self.MAX_THRUST)
-        )
+        self.GND_EFF_H_CLIP = 0.25 * self.PROP_RADIUS * np.sqrt((15 * self.MAX_RPM**2 * self.KF * self.GND_EFF_COEFF) / self.MAX_THRUST)
 
         self.PWM2RPM_SCALE = 0.2685
         self.PWM2RPM_CONST = 4070.3
@@ -99,12 +100,8 @@ class Drone(object):
         self.ang_v = np.zeros(3)
         self.last_clipped_action = np.zeros(4)
 
-        act_lower_bound = (
-            self.KF * 1 * (self.PWM2RPM_SCALE * self.MIN_PWM + self.PWM2RPM_CONST) ** 2
-        )
-        act_upper_bound = (
-            self.KF * 1 * (self.PWM2RPM_SCALE * self.MAX_PWM + self.PWM2RPM_CONST) ** 2
-        )
+        act_lower_bound = self.KF * 1 * (self.PWM2RPM_SCALE * self.MIN_PWM + self.PWM2RPM_CONST) ** 2
+        act_upper_bound = self.KF * 1 * (self.PWM2RPM_SCALE * self.MAX_PWM + self.PWM2RPM_CONST) ** 2
         self.physical_action_bounds = (
             np.full(4, act_lower_bound, np.float32),
             np.full(4, act_upper_bound, np.float32),
@@ -113,9 +110,24 @@ class Drone(object):
         self.resetDrone()
         self.loadDrone()
 
+    def set_seed(self, seed):
+        self.rng = np.random.default_rng(seed)
+
     def getDroneID(self):
         """Gets the drone's ID"""
         return self.drone
+
+    def get_position(self):
+        return self.pos
+
+    def get_orientation(self):
+        return self.rpy
+
+    def get_quaternion(self):
+        return self.quat
+
+    def get_linear_velocity(self):
+        return self.vel
 
     def setCurrentRawAction(self, action):
         """Sets the current raw action"""
@@ -166,6 +178,9 @@ class Drone(object):
         self.action_buffer.append(action)
         self.current_physical_action = action
 
+        if np.isnan(action).any():
+            print("[WARNING] NaN detected in action:", action)
+
         thrust = np.clip(action, self.physical_action_bounds[0], self.physical_action_bounds[1])
         self.current_clipped_action = thrust
 
@@ -175,7 +190,7 @@ class Drone(object):
 
         return rpm
 
-    def physics(self, pyb_client, rpm):
+    def physics(self, rpm):
         """Base PyBullet physics implementation."""
         forces = np.array(rpm**2) * self.KF
         torques = np.array(rpm**2) * self.KM
@@ -183,18 +198,29 @@ class Drone(object):
         z_torque = -torques[0] + torques[1] - torques[2] + torques[3]
 
         for i in range(4):
-            pyb_client.applyExternalForce(
+            self._p.applyExternalForce(
                 self.drone,
                 i,
                 forceObj=[0, 0, forces[i]],
                 posObj=[0, 0, 0],
-                flags=p.LINK_FRAME,
+                flags=self._p.LINK_FRAME,
             )
-        pyb_client.applyExternalTorque(
+
+        # This is for the rotor visuals
+        # for i in range(4):
+        #     self._p.setJointMotorControl2(
+        #         self.drone,
+        #         jointIndex=i,
+        #         controlMode=self._p.VELOCITY_CONTROL,
+        #         targetVelocity=rpm[i],
+        #         force=0.010,
+        #     )
+
+        self._p.applyExternalTorque(
             self.drone,
             4,
             torqueObj=[0, 0, z_torque],
-            flags=p.LINK_FRAME,
+            flags=self._p.LINK_FRAME,
         )
 
     def loadDrone(self):
@@ -228,9 +254,11 @@ class Drone(object):
         start_y = pad_y + fixed_distance * np.sin(angle)
         start_z = 2.0
 
-        drone = self.pyb_client.loadURDF(
-            pkg_resources.resource_filename("deepRL_for_autonomous_drones", "assets/cf2x.urdf"),
+        drone = self._p.loadURDF(
+            str(files("deepRL_for_autonomous_drones") / "assets/cf2x.urdf"),
+            # str(files("deepRL_for_autonomous_drones") / "assets/cf21x_bullet.urdf"),
             [start_x, start_y, start_z],
+            flags=self._p.URDF_USE_INERTIA_FROM_FILE,
         )
 
         self.drone = drone
@@ -251,9 +279,9 @@ class Drone(object):
         and improve performance (at the expense of memory).
         """
 
-        self.pos, self.quat = self.pyb_client.getBasePositionAndOrientation(self.drone)
-        self.rpy = self.pyb_client.getEulerFromQuaternion(self.quat)
-        self.vel, self.ang_v = self.pyb_client.getBaseVelocity(self.drone)
+        self.pos, self.quat = self._p.getBasePositionAndOrientation(self.drone)
+        self.rpy = self._p.getEulerFromQuaternion(self.quat)
+        self.vel, self.ang_v = self._p.getBaseVelocity(self.drone)
 
         # self.quat = self.quat / np.linalg.norm(self.quat) if np.linalg.norm(self.quat) > 0 else np.array([0, 0, 0, 1])
 
@@ -290,3 +318,61 @@ class Drone(object):
         return state.reshape(
             20,
         )
+
+    def _dragWind(self):
+        """Simulates the effect of wind on the drone."""
+        # _, orientation = p.getBasePositionAndOrientation(self.drone)
+        # linear_vel, _ = p.getBaseVelocity(self.drone)
+        # base_rot = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
+        # relative_velocity = np.array(linear_vel) - self.wind_force
+
+        state = self.getDroneStateVector()
+        base_rot = np.array(self._p.getMatrixFromQuaternion(state[3:7])).reshape(3, 3)
+        # relative_velocity = np.array(state[10:13]) - self.wind_force
+        relative_velocity = np.array(state[10:13])
+
+        drag = np.dot(base_rot.T, self.DRAG_COEFF * np.array(relative_velocity))
+        self._p.applyExternalForce(
+            self.getDroneID(),
+            4,
+            forceObj=drag,
+            posObj=[0, 0, 0],
+            flags=self._p.LINK_FRAME,
+        )
+
+    def _groundEffect(self, rpm):
+        """
+        Simulates ground effect, where the drone experiences increased lift
+        when flying closer to the ground. It calculates additional thrust contributions
+        for reach rotor. Allows for a more accurate representation of drone behavior during
+        low-altitude flight.
+        """
+
+        # ---- Kin. info of all links (propellers and center of mass) ----#
+        link_states = self._p.getLinkStates(
+            self.getDroneID(),
+            linkIndices=[0, 1, 2, 3, 4],
+            computeLinkVelocity=1,
+            computeForwardKinematics=1,
+        )
+
+        # ---- Simple, per-propeller ground effects ----#
+        prop_heights = np.array(
+            [
+                link_states[0][0][2],
+                link_states[1][0][2],
+                link_states[2][0][2],
+                link_states[3][0][2],
+            ]
+        )
+        prop_heights = np.clip(prop_heights, self.GND_EFF_H_CLIP, np.inf)
+        gnd_effects = np.array(rpm**2) * self.KF * self.GND_EFF_COEFF * (self.PROP_RADIUS / (4 * prop_heights)) ** 2
+        if np.abs(self.rpy[0]) < np.pi / 2 and np.abs(self.rpy[1]) < np.pi / 2:
+            for i in range(4):
+                self._p.applyExternalForce(
+                    self.getDroneID(),
+                    i,
+                    forceObj=[0, 0, gnd_effects[i]],
+                    posObj=[0, 0, 0],
+                    flags=self._p.LINK_FRAME,
+                )

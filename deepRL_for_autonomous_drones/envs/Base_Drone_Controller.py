@@ -1,32 +1,74 @@
+import os
+import sys
 import random
 import itertools
 import math
+import ctypes
 import gymnasium as gym
 import numpy as np
-import pybullet as p
+
+# import pybullet as p
 import pybullet_data
-import pkg_resources
+import pkgutil
+
+# import pkg_resources
+import logging
+from pybullet_utils import bullet_client
+from importlib.resources import files
 from deepRL_for_autonomous_drones.utils.Lidar import Lidar
 from deepRL_for_autonomous_drones.envs.reward_functions import reward_functions
 from deepRL_for_autonomous_drones.envs.drone import Drone
-from deepRL_for_autonomous_drones.envs.obstacles import (
-    loadStaticBlocks,
-    loadMovingBlocks,
-    loadTorusObstacles,
-    getFixedTreePositions,
-    generateStaticTrees,
-)
+from deepRL_for_autonomous_drones.envs.obstacles import generateStaticTrees, loadMovingBlocks, loadStaticBlocks, loadTorusObstacles
+from deepRL_for_autonomous_drones.envs.env_cfg import EnvCfg
+
+
+class RedirectStream(object):
+    """
+    Hide some messages when building the PyBullet engine.
+    """
+
+    @staticmethod
+    def _flush_c_stream(stream):
+        if isinstance(stream.name, str):
+            streamname = stream.name[1:-1]
+            libc = ctypes.CDLL(None)
+            libc.fflush(ctypes.c_void_p.in_dll(libc, streamname))
+
+    def __init__(self, stream=sys.stdout, file=os.devnull):
+        self.stream = stream
+        self.file = file
+
+    def __enter__(self):
+        self.stream.flush()  # ensures python stream unaffected
+        self.fd = open(self.file, "w+", encoding="utf-8")
+        self.dup_stream = os.dup(self.stream.fileno())
+        os.dup2(self.fd.fileno(), self.stream.fileno())  # replaces stream
+
+    def __exit__(self, type, value, traceback):
+        RedirectStream._flush_c_stream(self.stream)  # ensures C stream buffer empty
+        os.dup2(self.dup_stream, self.stream.fileno())  # restores stream
+        os.close(self.dup_stream)
+        self.fd.close()
+
+
+with RedirectStream(sys.stderr):
+    import pybullet as p
 
 
 class BaseDroneController(gym.Env):
-    def __init__(self, args):
-        self.args = args
-        if self.args.visual_mode.upper() == "GUI":
-            p.connect(p.GUI)
-        else:
-            p.connect(p.DIRECT)
-        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
 
+    def __init__(self, render_mode=None, graphics=False):
+        self.args = EnvCfg
+        self.render_mode = render_mode
+        self.use_graphics = graphics or (render_mode == "human")
+        self._init_logger(rank=self.worker_id if hasattr(self, "worker_id") else None)
+        self.logger.info("Initialized logger for this environment.")
+
+        self._p = self._setup_client_and_physics()
+        self.bullet_client_id = self._p._client
+
+        self.use_graphics = graphics
         # ---- Parameter arguments ----#
         self.visual_mode = self.args.visual_mode
         self.launch_pad_position = self.args.launch_pad_position
@@ -36,7 +78,6 @@ class BaseDroneController(gym.Env):
         self.leg_contact_reward = self.args.leg_contact_reward
         self.gravity = self.args.gravity
         self.add_obstacles = self.args.add_obstacles
-        self.enable_ground_effect = self.args.enable_ground_effect
         self.enable_wind = self.args.enable_wind
         self.debug_axes = self.args.debug_axes
         self.enable_curriculum_learning = self.args.enable_curriculum_learning
@@ -88,7 +129,7 @@ class BaseDroneController(gym.Env):
         self.LIDAR_MAX_DISTANCE = 10  # Max distance in meters a LIDAR ray can detect obstacles
         self.LIDAR_LINK_IDX = 4  # Index of the link from which the rays are emitted
         self.OFFSET = 0
-        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+        self._p.configureDebugVisualizer(self._p.COV_ENABLE_GUI, 0)
 
         # ---- Set RGB camera constants ----#
         self.camera_width = 64
@@ -109,6 +150,7 @@ class BaseDroneController(gym.Env):
         self.current_clipped_action = None  # current_noisy_physical_action clipped to physical action bounds
         self.initial_reset = False
         self.at_reset = False
+        self._seed = None
 
         self.episode_wind_active = False
 
@@ -119,7 +161,7 @@ class BaseDroneController(gym.Env):
             launch_pad_position=self.launch_pad_position,
             gravity=self.gravity,
             ctrl_freq=self.CTRL_FREQ,
-            pyb_client=p,
+            bullet_client=self._p,
         )
 
         # ---- Add observation components ----#
@@ -137,6 +179,77 @@ class BaseDroneController(gym.Env):
 
         # ---- Update and store the drones kinematic information ----#
         self.drone.updateAndStoreKinematicInformation()
+
+    def _init_logger(self, log_name="env_log", log_dir="env_logs", rank=None):
+        os.makedirs(log_dir, exist_ok=True)
+        filename = f"{log_name}_{rank or os.getpid()}.log"
+        log_path = os.path.join(log_dir, filename)
+
+        self.logger = logging.getLogger(f"SafeDroneEnv-{rank or os.getpid()}")
+        self.logger.setLevel(logging.DEBUG)
+
+        fh = logging.FileHandler(log_path)
+        fh.setLevel(logging.DEBUG)
+
+        formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s")
+        fh.setFormatter(formatter)
+        self.logger.addHandler(fh)
+
+        self.logger.propagate = False  # prevents double logging
+
+    # def _setup_client_and_physics(self, graphics=False) -> bullet_client.BulletClient:
+    #     with RedirectStream(sys.stdout):
+    #         if graphics or self.use_graphics or self.render_mode == "human" or self.args.visual_mode.upper() == "GUI":
+    #             bc = bullet_client.BulletClient(connection_mode=p.GUI)
+    #             bc.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
+    #             bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
+    #         else:
+    #             bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
+    #             bc.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+    #             bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
+    #     try:
+    #         if os.environ["PYBULLET_EGL"]:
+    #             con_mode = bc.getConnectionInfo()["connectionMethod"]
+    #             if con_mode == bc.DIRECT:
+    #                 egl = pkgutil.get_loader("eglRenderer")
+    #                 if egl:
+    #                     bc.loadPlugin(egl.get_filename(), "_eglRendererPlugin")
+    #                     print("LOADED EGL...")
+    #                 else:
+    #                     bc.loadPlugin("eglRendererPlugin")
+    #     except KeyError:
+    #         # print("Note: could not load egl...")
+    #         pass
+
+    #     bc.setAdditionalSearchPath(pybullet_data.getDataPath())
+    #     # disable GUI debug visuals
+    #     # bc.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+    #     # bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
+
+    #     return bc
+
+    def _setup_client_and_physics(self, graphics=False):
+        with RedirectStream(sys.stdout):
+            try:
+                existing_connections = p.getConnectionInfo()
+                if existing_connections and existing_connections["isConnected"] and existing_connections["connectionMethod"] == p.GUI:
+                    print("Existing GUI connection detected. Using DIRECT to avoid conflict.")
+                    bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
+                else:
+                    connection_mode = (
+                        p.GUI
+                        if (graphics or self.use_graphics or self.render_mode == "human" or self.args.visual_mode.upper() == "GUI")
+                        else p.DIRECT
+                    )
+                    bc = bullet_client.BulletClient(connection_mode=connection_mode)
+                    bc.configureDebugVisualizer(p.COV_ENABLE_GUI, int(connection_mode == p.GUI))
+                    bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, int(connection_mode == p.GUI))
+            except Exception as e:
+                print(f"Error while setting up PyBullet client: {e}")
+                bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
+
+        bc.setAdditionalSearchPath(pybullet_data.getDataPath())
+        return bc
 
     def _actionSpace(self):
         """Implement in Subclasses"""
@@ -173,6 +286,15 @@ class BaseDroneController(gym.Env):
         """Post-processing after calling `.reset()`."""
         self.at_reset = False
 
+    def seed(self, seed=None):
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+            self.logger.info("Seed: %s", seed, exc_info=1)
+            self.rng = np.random.default_rng(seed)
+            if hasattr(self, "drone"):
+                self.drone.set_seed(seed)
+
     def reset(self, seed=None, options=None):
         """
         (Re-)initializes the environment to start an episode.
@@ -180,9 +302,16 @@ class BaseDroneController(gym.Env):
         """
         # seed for reproducibility
         super().reset(seed=seed)
-        if seed is not None:
-            random.seed(seed)
-            np.random.seed(seed)
+        self.seed(seed)
+        # if seed is not None:
+        #     self._seed = seed
+        #     self.logger.info("Seed: %s", seed, exc_info=1)
+        #     self.rng = np.random.default_rng(seed)
+        #     if hasattr(self, "drone"):
+        #         self.drone.set_seed(seed)
+
+        # if not hasattr(self, "logger"):
+        #     self._init_logger()
 
         # ---- Before reset ----#
         self.before_reset()
@@ -198,10 +327,12 @@ class BaseDroneController(gym.Env):
             if not isinstance(obs, dict):
                 raise TypeError(f"Expected dict observation but got {type(obs)}: {obs}")
 
+        info = {}
+
         # ---- After reset ----#
         self.after_reset()
 
-        return obs, {}
+        return obs, info
 
     def _resetEnvironment(self):
         """
@@ -217,28 +348,28 @@ class BaseDroneController(gym.Env):
         self.last_clipped_action = np.zeros(4)
 
         # ---- Calculate wind force if enabled ----#
-        if self.enable_wind and self._wind_effect_active:
-            self.p_e = self.rng.uniform(0, 1)
-            self.episode_wind_active = self.p_e < 0.8
-            if self.episode_wind_active:
-                f_magnitude = self.rng.uniform(0, 0.005)
-                f_direction = self.rng.uniform(-1, 1, 3)
-                f_direction[2] = 0
-                f_direction /= np.linalg.norm(f_direction[:2])
-                self.wind_force = f_magnitude * f_direction
-            else:
-                self.wind_force = np.array([0.0, 0.0, 0.0])
+        # if self.enable_wind and self._wind_effect_active:
+        #     self.p_e = self.rng.uniform(0, 1)
+        #     self.episode_wind_active = self.p_e < 0.8
+        #     if self.episode_wind_active:
+        #         f_magnitude = self.rng.uniform(0, 0.005)
+        #         f_direction = self.rng.uniform(-1, 1, 3)
+        #         f_direction[2] = 0
+        #         f_direction /= np.linalg.norm(f_direction[:2])
+        #         self.wind_force = f_magnitude * f_direction
+        #     else:
+        #         self.wind_force = np.array([0.0, 0.0, 0.0])
 
         # ---- Set PyBullet's parameters ----#
-        p.resetSimulation()
-        p.setRealTimeSimulation(0)
-        p.setGravity(0, 0, self.gravity)
-        p.setTimeStep(self.PYB_TIMESTEP)
+        self._p.resetSimulation()
+        self._p.setRealTimeSimulation(0)
+        self._p.setGravity(0, 0, self.gravity)
+        self._p.setTimeStep(self.PYB_TIMESTEP)
 
         # ---- Load ground plane, drone, launch pad, and obstacles models ----#
-        self.plane = p.loadURDF("plane.urdf")
-        self.launch_pad = p.loadURDF(
-            pkg_resources.resource_filename("deepRL_for_autonomous_drones", "assets/launch_pad.urdf"),
+        self.plane = self._p.loadURDF("plane.urdf")
+        self.launch_pad = self._p.loadURDF(
+            str(files("deepRL_for_autonomous_drones") / "assets/launch_pad.urdf"),
             self.launch_pad_position,
             useFixedBase=True,
         )
@@ -294,7 +425,8 @@ class BaseDroneController(gym.Env):
                 "lidar": lidar_state.astype(np.float32),
             }
         elif self.observation_type == 3:
-            rgb_obs = self._getCameraImage()
+            # rgb_obs = self._getCameraImage()
+            rgb_obs = self._getCameraImage() / 255.0
 
             return {
                 "state": drone_state.astype(np.float32),
@@ -310,7 +442,8 @@ class BaseDroneController(gym.Env):
             normalized_lidar_dist = lidar_distances / self.LIDAR_MAX_DISTANCE
             lidar_state = normalized_lidar_dist
 
-            rgb_obs = self._getCameraImage()
+            # rgb_obs = self._getCameraImage()
+            rgb_obs = self._getCameraImage() / 255.0
 
             return {
                 "state": drone_state.astype(np.float32),
@@ -323,13 +456,13 @@ class BaseDroneController(gym.Env):
     def _getLidarSensorReadings(self):
         """Returns the current LiDAR sensor readings from the drone."""
         lidar = Lidar()
-        lidar_position = p.getLinkState(self.drone.getDroneID(), self.LIDAR_LINK_IDX)
+        lidar_position = self._p.getLinkState(self.drone.getDroneID(), self.LIDAR_LINK_IDX)
         ray_from_position = [
             lidar_position[0][0],
             lidar_position[0][1],
             lidar_position[0][2],
         ]
-        lidar_orientation = list(p.getEulerFromQuaternion(lidar_position[1]))
+        lidar_orientation = list(self._p.getEulerFromQuaternion(lidar_position[1]))
 
         lidar_hits = lidar.CheckHits(
             ray_from_position,
@@ -344,32 +477,32 @@ class BaseDroneController(gym.Env):
 
     def _getCameraImage(self):
         """Capture RGB image from drone's perspective."""
-        pos, orn = p.getBasePositionAndOrientation(self.drone.getDroneID())
-        rot = np.array(p.getMatrixFromQuaternion(orn)).reshape(3, 3)
+        pos, orn = self._p.getBasePositionAndOrientation(self.drone.getDroneID())
+        rot = np.array(self._p.getMatrixFromQuaternion(orn)).reshape(3, 3)
 
         # Camera position 0.1m in front of the drone
         camera_pos = pos + rot.dot([0.1, 0, 0])
         target_pos = pos + rot.dot([1, 0, 0])
 
-        view_matrix = p.computeViewMatrix(
+        view_matrix = self._p.computeViewMatrix(
             cameraEyePosition=camera_pos,
             cameraTargetPosition=target_pos,
             cameraUpVector=rot.dot([0, 0, 1]),
         )
 
-        proj_matrix = p.computeProjectionMatrixFOV(
+        proj_matrix = self._p.computeProjectionMatrixFOV(
             fov=self.camera_fov,
             aspect=self.camera_aspect,
             nearVal=self.camera_near,
             farVal=self.camera_far,
         )
 
-        _, _, rgb, _, _ = p.getCameraImage(
+        _, _, rgb, _, _ = self._p.getCameraImage(
             width=self.camera_width,
             height=self.camera_height,
             viewMatrix=view_matrix,
             projectionMatrix=proj_matrix,
-            renderer=(p.ER_BULLET_HARDWARE_OPENGL if self.args.visual_mode.upper() == "GUI" else p.ER_TINY_RENDERER),
+            renderer=(self._p.ER_BULLET_HARDWARE_OPENGL if self.args.visual_mode.upper() == "GUI" else self._p.ER_TINY_RENDERER),
         )
 
         rgb_array = np.array(rgb, dtype=np.uint8)[:, :, :3]  # Remove alpha channel
@@ -377,13 +510,13 @@ class BaseDroneController(gym.Env):
         rgb_array = rgb_array.astype(np.uint8)
         return rgb_array
 
-    def _computeReward(self, observation, action, reward_function):
+    def _computeReward(self, observation, action, reward_function, tilt_cost=0.0, spin_cost=0.0, lidar_cost=0.0):
         """Calls the selected reward function and computes it."""
         if reward_function not in reward_functions:
             print(f"[WARNING] Invalid reward function '{reward_function}' selected. Using default: 1")
             reward_function = 1
 
-        return reward_functions[reward_function](self, observation, action)
+        return reward_functions[reward_function](self, observation, action, tilt_cost, spin_cost, lidar_cost)
 
     def _generateStaticTrees(self):
         self.trees = []
@@ -398,6 +531,7 @@ class BaseDroneController(gym.Env):
 
             # ---- Set a fixed random seed to ensure consistency ----#
             rng = np.random.default_rng(seed=42)
+            # rng = np.random.default_rng(seed=self._seed)
 
             num_trees = 50
             min_distance_from_pad = 1.0
@@ -423,7 +557,7 @@ class BaseDroneController(gym.Env):
             if not hasattr(self, "fixed_tree_types"):
                 self.fixed_tree_types = [tree_options[rng.integers(0, len(tree_options))] for _ in self.fixed_tree_positions]
 
-            self.trees = generateStaticTrees(self.fixed_tree_positions, self.fixed_tree_types)
+            self.trees = generateStaticTrees(self.fixed_tree_positions, self.fixed_tree_types, self._p)
 
     def _loadStaticBlocks(self):
         self.static_blocks = []
@@ -460,12 +594,12 @@ class BaseDroneController(gym.Env):
         # For the first moving block: oscillate along x-axis.
         new_x = amplitude * np.sin(omega * current_time)
         new_pos1 = [new_x, 0, 1]  # keep y=0 and fixed z = 1
-        p.resetBasePositionAndOrientation(self.first_moving_block, new_pos1, p.getQuaternionFromEuler([0, 0, 0]))
+        self._p.resetBasePositionAndOrientation(self.first_moving_block, new_pos1, self._p.getQuaternionFromEuler([0, 0, 0]))
 
         # For the second moving block: oscillate along y-axis at double speed.
         new_y = amplitude * np.sin(2 * omega * current_time)
         new_pos2 = [0, new_y, 1]  # keep x=0 and fixed z = 1
-        p.resetBasePositionAndOrientation(self.second_moving_block, new_pos2, p.getQuaternionFromEuler([0, 0, 0]))
+        self._p.resetBasePositionAndOrientation(self.second_moving_block, new_pos2, self._p.getQuaternionFromEuler([0, 0, 0]))
 
     def setWindEffects(self, flag: bool):
         """Enable or diable wind effects."""
@@ -488,11 +622,15 @@ class BaseDroneController(gym.Env):
         self._moving_blocks_active = flag
 
     def close(self):
-        p.disconnect()
+        if hasattr(self, "_p"):
+            try:
+                self._p.disconnect()
+            except Exception as e:
+                print("[WARNING] Bullet disconnect failed:", e)
 
     def _showDroneLocalAxes(self):
         AXIS_LENGTH = 2 * 0.0397
-        self.X_AX = p.addUserDebugLine(
+        self.X_AX = self._p.addUserDebugLine(
             lineFromXYZ=[0, 0, 0],
             lineToXYZ=[AXIS_LENGTH, 0, 0],
             lineColorRGB=[1, 0, 0],
@@ -500,7 +638,7 @@ class BaseDroneController(gym.Env):
             parentLinkIndex=-1,
             replaceItemUniqueId=int(self.X_AX),
         )
-        self.Y_AX = p.addUserDebugLine(
+        self.Y_AX = self._p.addUserDebugLine(
             lineFromXYZ=[0, 0, 0],
             lineToXYZ=[0, AXIS_LENGTH, 0],
             lineColorRGB=[0, 1, 0],
@@ -508,7 +646,7 @@ class BaseDroneController(gym.Env):
             parentLinkIndex=-1,
             replaceItemUniqueId=int(self.Y_AX),
         )
-        self.Z_AX = p.addUserDebugLine(
+        self.Z_AX = self._p.addUserDebugLine(
             lineFromXYZ=[0, 0, 0],
             lineToXYZ=[0, 0, AXIS_LENGTH],
             lineColorRGB=[0, 0, 1],
