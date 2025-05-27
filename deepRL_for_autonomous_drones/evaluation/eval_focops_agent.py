@@ -19,9 +19,11 @@ from fsrl.utils import BaseLogger, TensorboardLogger, WandbLogger
 from fsrl.utils.exp_util import auto_name, load_config_and_model, seed_all
 
 
-def make_training_env(task):
-    env = gym.make(task)
+def make_env(task, graphics: bool):
+    render_mode = "human" if graphics else None
+    env = gym.make(task, render_mode=render_mode, graphics=graphics)
     env = FlattenObservation(env)
+    env.reset()
     return env
 
 
@@ -41,8 +43,7 @@ def evaluate(args: EvalConfig = EvalConfig):
     cfg, model = load_config_and_model(args.path, args.best)
 
     task = cfg["task"]
-    demo_env = gym.make(task)
-    # demo_env = make_training_env(task)
+    demo_env = make_env(task, graphics=False)
 
     agent = FOCOPSAgent(
         env=demo_env,
@@ -59,11 +60,9 @@ def evaluate(args: EvalConfig = EvalConfig):
 
     if args.parallel_eval:
         assert args.render is False, "please use single env when rendering"
-        test_envs = ShmemVectorEnv([lambda: gym.make(task) for _ in range(args.eval_episodes)])
-        # test_envs = ShmemVectorEnv([lambda: make_training_env(task) for _ in range(args.eval_episodes)])
+        test_envs = ShmemVectorEnv([lambda: make_env(task, graphics=False) for _ in range(args.eval_episodes)])
     else:
-        render_mode = "human" if args.render else None
-        test_envs = gym.make(task, render_mode=render_mode)
+        test_envs = make_env(task, graphics=args.render)
 
     rews, lens, cost = agent.evaluate(
         test_envs=test_envs,

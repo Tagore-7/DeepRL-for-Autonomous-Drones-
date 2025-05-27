@@ -4,6 +4,9 @@ env_logs
 logs
 wandb
 benchmark_results
+sb3_runs_nonconstrained
+*/evaluation/evaluation/
+*/evaluation/evaluations/
 *.zip
 .vscode
 

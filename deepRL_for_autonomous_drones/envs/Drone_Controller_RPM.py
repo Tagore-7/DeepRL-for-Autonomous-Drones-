@@ -12,7 +12,8 @@ from deepRL_for_autonomous_drones.envs.env_cfg import EnvCfg
 
 class DroneControllerRPM(BaseDroneController):
     def __init__(self, render_mode=None, graphics=False):
-        super(DroneControllerRPM, self).__init__(render_mode=None, graphics=False)
+        # super(DroneControllerRPM, self).__init__(render_mode=None, graphics=False)
+        super().__init__(render_mode=render_mode, graphics=graphics)
         self.reward_function = self.args.reward_function
 
     def _actionSpace(self):
@@ -111,6 +112,14 @@ class DroneControllerRPM(BaseDroneController):
 
         return self.observation_space
 
+    def setWindScale(self, scale: float):
+        self.wind_force_scale = np.clip(scale, 0.0, 1.0)
+
+        # ---- re-apply scale to current magnitude/direction ----#
+        f_dir = self.wind_force / np.linalg.norm(self.wind_force + 1e-8)
+        f_mag = np.linalg.norm(self.wind_force)
+        self.wind_force = self.wind_force_scale * f_mag * f_dir
+
     def _dragWind(self):
         """Simulates the effect of wind on the drone."""
         # _, orientation = p.getBasePositionAndOrientation(self.drone)
@@ -118,15 +127,22 @@ class DroneControllerRPM(BaseDroneController):
         # base_rot = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
         # relative_velocity = np.array(linear_vel) - self.wind_force
 
-        state = self.drone.getDroneStateVector()
-        base_rot = np.array(self._p.getMatrixFromQuaternion(state[3:7])).reshape(3, 3)
-        relative_velocity = np.array(state[10:13]) - self.wind_force
+        # state = self.drone.getDroneStateVector()
+        # base_rot = np.array(self._p.getMatrixFromQuaternion(state[3:7])).reshape(3, 3)
+        # relative_velocity = np.array(state[10:13]) - self.wind_force
+        # drag = np.dot(base_rot.T, self.drone.DRAG_COEFF * np.array(relative_velocity))
+        # self._p.applyExternalForce(
+        #     self.drone.getDroneID(),
+        #     4,
+        #     forceObj=drag,
+        #     posObj=[0, 0, 0],
+        #     flags=self._p.LINK_FRAME,
+        # )
 
-        drag = np.dot(base_rot.T, self.drone.DRAG_COEFF * np.array(relative_velocity))
         self._p.applyExternalForce(
             self.drone.getDroneID(),
-            4,
-            forceObj=drag,
+            -1,
+            forceObj=self.wind_force,
             posObj=[0, 0, 0],
             flags=self._p.LINK_FRAME,
         )
@@ -193,7 +209,13 @@ class DroneControllerRPM(BaseDroneController):
         """Advances the environment by one simulation step."""
         # if self.PYB_STEPS_PER_CTRL > 1 and self.enable_ground_effect:
         #     self.drone.updateAndStoreKinematicInformation()
+        force_is_on = self.enable_wind and self._wind_effect_active and self.episode_wind_active
+        gust_active = self.rng.uniform() < 0.3
+
         for _ in range(self.PYB_STEPS_PER_CTRL):
+            if force_is_on and gust_active:
+                self._dragWind()
+
             self.drone.physics(clipped_action)
 
             position, _ = self._p.getBasePositionAndOrientation(self.drone.getDroneID())
@@ -203,6 +225,10 @@ class DroneControllerRPM(BaseDroneController):
                 cameraPitch=-45,
                 cameraTargetPosition=position,
             )
+
+            # if force_is_on and gust_active:
+            #     self._dragWind()
+
             self._p.stepSimulation()
 
             # if self.enable_ground_effect:
@@ -291,6 +317,8 @@ class DroneControllerRPM(BaseDroneController):
         spin_cost = np.clip(spin_penalty / 20.0, 0, 1.0) * 0.5  # max ~0.5
         cost += tilt_cost + spin_cost
 
+        # cost /= self.CTRL_STEPS
+
         # TODO: Change this so lidar_cost isn't always being returned, ie when no obstacles
         return float(cost), float(tilt_cost), float(spin_cost), float(lidar_cost)
 
@@ -322,16 +350,15 @@ class DroneControllerRPM(BaseDroneController):
         return False
 
     def render(self, mode="human"):
-        # print("Not rendering")
         if mode == "human":
             if not self.use_graphics:
                 self._p.disconnect()
                 self.use_graphics = True
-                self._p = self._setup_client_and_physics(graphics=True)
-                # self._p = self._setup_client_and_physics(graphics=False)
-                self.bullet_client_id = self._p._client
-                self.stored_state_id = -1
-                # self._resetEnvironment()
-        if mode != "rgb_array":
-            return np.array([])
-        return
+                # self._p = self._setup_client_and_physics(graphics=True)
+                self._p = p.connect(p.GUI)
+                self.drone.set_bullet_client(self._p)
+                self._resetEnvironment()
+                # self.drone.set_bullet_client(self._p)
+        # if mode != "rgb_array":
+        #     return np.array([])
+        # return

@@ -110,6 +110,9 @@ class Drone(object):
         self.resetDrone()
         self.loadDrone()
 
+    def set_bullet_client(self, bullet_client):
+        self._p = bullet_client
+
     def set_seed(self, seed):
         self.rng = np.random.default_rng(seed)
 
