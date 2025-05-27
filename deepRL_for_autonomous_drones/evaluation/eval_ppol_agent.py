@@ -2,6 +2,7 @@ import os
 import pandas as pd
 from dataclasses import asdict, dataclass
 from typing import Optional, Tuple
+import numpy as np
 
 import bullet_safety_gym
 
@@ -18,30 +19,27 @@ from fsrl.agent import PPOLagAgent
 from fsrl.utils import BaseLogger, TensorboardLogger, WandbLogger
 from fsrl.utils.exp_util import auto_name, load_config_and_model, seed_all
 
-from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM_New import DroneControllerRPM
-from deepRL_for_autonomous_drones.envs.Base_Drone_Controller_New import BaseDroneController
-from deepRL_for_autonomous_drones.envs.safe_drone_env import SafeDroneEnv
-from deepRL_for_autonomous_drones.envs.safe_drone_env_new import SafetyDrone
+from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControllerRPM
+from deepRL_for_autonomous_drones.envs.Base_Drone_Controller import BaseDroneController
 
 
-# def make_training_env(task, render_mode=False):
-#     env = gym.make(task)
-#     env = FlattenObservation(env)
-#     return env
-
-
-def make_training_env(task):
-    # env = gym.make(task, render_mode="human", graphics=True)
-    env = gym.make(task)
+def make_env(task, graphics: bool = False, wind_scale: float = 1.0):
+    render_mode = "human" if graphics else None
+    env = gym.make(task, render_mode=render_mode, graphics=graphics)
     env = FlattenObservation(env)
+
+    env.unwrapped.setWindEffects(True)
+    if hasattr(env.unwrapped, "setWindScale"):
+        env.unwrapped.setWindScale(wind_scale)
+
     return env
 
 
 @dataclass
 class EvalConfig:
-    path: str = "../training/benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-30/ppol-d038"
+    path: str = "../training/benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-50/ppol-b434"
     best: bool = True
-    eval_episodes: int = 20
+    eval_episodes: int = 1
     parallel_eval: bool = False
     device: str = "cpu"
     render: bool = True
@@ -51,54 +49,60 @@ class EvalConfig:
 @pyrallis.wrap()
 def evaluate(args: EvalConfig = EvalConfig):
     cfg, model = load_config_and_model(args.path, args.best)
-
     task = cfg["task"]
-    # demo_env = gym.make(task)
-    demo_env = make_training_env(task)
+
+    # ---- create a single environment once (reusing GUI) ----#
+    test_env = make_env(task, graphics=args.render, wind_scale=0.0)
 
     agent = PPOLagAgent(
-        env=demo_env,
+        env=test_env,
         logger=BaseLogger(),
         device=args.device,
         use_lagrangian=cfg["use_lagrangian"],
         thread=cfg["thread"],
         seed=cfg["seed"],
-        cost_limit=cfg["cost_limit"],  # Original FSRL Script did not have this for PPOL?
+        cost_limit=cfg["cost_limit"],
         hidden_sizes=cfg["hidden_sizes"],
         unbounded=cfg["unbounded"],
         last_layer_scale=cfg["last_layer_scale"],
     )
 
-    if args.parallel_eval:
-        assert args.render is False, "please use single env when rendering"
-        # test_envs = ShmemVectorEnv([lambda: gym.make(task) for _ in range(args.eval_episodes)])
-        test_envs = ShmemVectorEnv([lambda: make_training_env(task) for _ in range(args.eval_episodes)])
-    else:
-        render_mode = "human" if args.render else None
-        # test_envs = gym.make(task, render_mode=render_mode)
-        test_envs = make_training_env(task)
+    wind_levels = np.linspace(0.0, 1.0, num=11)
+    results = []
 
-    rews, lens, cost = agent.evaluate(
-        test_envs=test_envs,
-        state_dict=model["model"],
-        eval_episodes=args.eval_episodes,
-        render=args.render,
-        train_mode=args.train_mode,
-    )
-    print("Traing mode: ", args.train_mode)
-    print(f"Eval reward: {rews}, cost: {cost}, length: {lens}")
+    for wind in wind_levels:
+        print(f"Evaluating at wind level {wind:.1f}")
 
-    csv_path = "evaluations"
-    os.makedirs(csv_path, exist_ok=True)
-    df = pd.DataFrame([{"task": task, "algo": cfg["prefix"], "seed": cfg["seed"], "reward": rews, "cost": cost, "length": lens}])
-    # Write or append
-    csv_file = "evaluations.csv"
-    path = os.path.join(csv_path, csv_file)
-    if not os.path.isfile(path):
-        df.to_csv(path, index=False)
-    else:
-        df.to_csv(path, mode="a", header=False, index=False)
-    print(f"Final eval CSV saved to {csv_path}")
+        if hasattr(test_env.unwrapped, "setWindScale"):
+            test_env.unwrapped.setWindScale(wind)
+
+        rews, lens, cost = agent.evaluate(
+            test_envs=test_env,
+            state_dict=model["model"],
+            eval_episodes=args.eval_episodes,
+            render=args.render,
+            train_mode=args.train_mode,
+        )
+
+        print(f"Eval reward: {rews}, cost: {cost}, length: {lens}")
+
+        results.append(
+            {
+                "wind": wind,
+                "reward": rews,
+                "cost": cost,
+                "length": lens,
+            }
+        )
+
+    df = pd.DataFrame(results)
+    df["task"] = task
+    df["algo"] = cfg["prefix"]
+    df["seed"] = cfg["seed"]
+
+    os.makedirs("evaluations", exist_ok=True)
+    out_path = os.path.join("evaluations", "wind_results.csv")
+    df.to_csv(out_path, index=False)
 
 
 if __name__ == "__main__":

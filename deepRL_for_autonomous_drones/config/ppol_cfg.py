@@ -69,4 +69,4 @@ class TrainCfg:
 class DroneLandingCfg(TrainCfg):
     epoch: int = 1500
     # cost_limit = 25
-    cost_limit: float = 30
+    cost_limit: float = 50

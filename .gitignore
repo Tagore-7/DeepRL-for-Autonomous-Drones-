@@ -5,6 +5,8 @@ logs
 wandb
 benchmark_results
 sb3_runs_nonconstrained
+*/evaluation/evaluation/
+*/evaluation/evaluations/
 ppo_moo.db
 *.zip
 .vscode

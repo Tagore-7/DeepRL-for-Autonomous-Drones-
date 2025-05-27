@@ -18,6 +18,10 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from deepRL_for_autonomous_drones import envs
 
+from fsrl.agent import PPOLagAgent
+from fsrl.utils import BaseLogger, TensorboardLogger, WandbLogger
+from tianshou.env import BaseVectorEnv, DummyVectorEnv, RayVectorEnv, ShmemVectorEnv, SubprocVectorEnv
+
 # from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControllerRPM
 
 
@@ -64,29 +68,32 @@ def rollout_cost_reward(model, env, episodes: int = 20):
     return float(np.mean(rewards)), float(np.mean(costs))
 
 
-def objective(trial: optuna.Trial, task: str, seed: int, train_steps: int):
+def objective(trial: optuna.Trial, task: str, seed: int, train_epochs: int):
     params = sample_ppo_hparams(trial)
     net_arch = params.pop("net_arch")
     num_envs = params.pop("num_envs")
 
-    vec_env = SubprocVecEnv([make_env(task, seed + i) for i in range(num_envs)])
+    vec_env = ShmemVectorEnv([make_env(task, seed + i) for i in range(num_envs)])
 
-    model = PPO(
-        "MlpPolicy",
-        vec_env,
-        policy_kwargs=dict(net_arch=net_arch),
-        verbose=0,
-        seed=seed,
-        tensorboard_log=None,
+    cost_limit = 50.0
+    use_lagrangian = True
+
+    agent = PPOLagAgent(
+        env=vec_env,
+        logger=TensorboardLogger(),  # or TensorboardLogger
         device="cpu",
-        **params,
+        seed=seed,
+        cost_limit=cost_limit,
+        use_lagrangian=use_lagrangian,
+        hidden_sizes=net_arch,
+        **params,  # n_steps, lr, etc.
     )
 
-    model.learn(total_timesteps=train_steps)
+    agent.learn(vec_env, epoch=train_epochs)
 
     vec_env.close()
     eval_env = make_env(task, seed + 10)()
-    reward, cost = rollout_cost_reward(model, eval_env, episodes=10)
+    reward, cost = rollout_cost_reward(agent, eval_env, episodes=10)
     eval_env.close()
 
     trial.set_user_attr("mean_reward", reward)
@@ -100,7 +107,7 @@ if __name__ == "__main__":
     parser.add_argument("--task", default="SafetyDroneLanding-v0")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--trials", type=int, default=40)
-    parser.add_argument("--train-steps", type=int, default=300_000)
+    parser.add_argument("--train-epochs", type=int, default=30)
     parser.add_argument("--storage", default="sqlite:///ppo_moo.db", help="Optuna storage URI")
     args = parser.parse_args()
 

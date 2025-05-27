@@ -91,7 +91,6 @@ class BaseDroneController(gym.Env):
         self._donut_obstacles_active = False
         self._moving_blocks_active = False
 
-        self._wind_effect_active = False
         self._trees_active = True
         # if self.enable_curriculum_learning:
         #     self._obstacles_active = False
@@ -105,6 +104,7 @@ class BaseDroneController(gym.Env):
 
         # wind force
         self.wind_force = np.array([0.0, 0.0, 0.0])
+        self.wind_force_scale = 0.0
 
         # ---- Constants ----#
         self.alpha = np.array([1.0, 1.0, 1.0])
@@ -121,7 +121,7 @@ class BaseDroneController(gym.Env):
         self.PYB_STEPS_PER_CTRL = int(self.PYB_FREQ / self.CTRL_FREQ)
         self.CTRL_TIMESTEP = 1.0 / self.CTRL_FREQ
         self.PYB_TIMESTEP = 1.0 / self.PYB_FREQ
-        self.EPISODE_LEN_SEC = 10
+        self.EPISODE_LEN_SEC = 15
         self.CTRL_STEPS = self.EPISODE_LEN_SEC * self.CTRL_FREQ
 
         # ---- LIDAR settings ----#
@@ -347,19 +347,6 @@ class BaseDroneController(gym.Env):
         self.previous_shaping = None  # Previous shaping reward for temporal difference shaping
         self.last_clipped_action = np.zeros(4)
 
-        # ---- Calculate wind force if enabled ----#
-        # if self.enable_wind and self._wind_effect_active:
-        #     self.p_e = self.rng.uniform(0, 1)
-        #     self.episode_wind_active = self.p_e < 0.8
-        #     if self.episode_wind_active:
-        #         f_magnitude = self.rng.uniform(0, 0.005)
-        #         f_direction = self.rng.uniform(-1, 1, 3)
-        #         f_direction[2] = 0
-        #         f_direction /= np.linalg.norm(f_direction[:2])
-        #         self.wind_force = f_magnitude * f_direction
-        #     else:
-        #         self.wind_force = np.array([0.0, 0.0, 0.0])
-
         # ---- Set PyBullet's parameters ----#
         self._p.resetSimulation()
         self._p.setRealTimeSimulation(0)
@@ -386,6 +373,26 @@ class BaseDroneController(gym.Env):
         # ---- Debug local drone axes ----#
         if self.debug_axes and self.visual_mode.upper() == "GUI":
             self._showDroneLocalAxes()
+
+        # ---- Calculate wind force if enabled ----#
+        if self.enable_wind and self._wind_effect_active:
+            # self.p_e = self.rng.uniform(0, 1)
+            # self.episode_wind_active = self.p_e < 0.5
+
+            # ---- For testing wind at various percentages ----#
+            self.episode_wind_active = self.wind_force_scale > 0.0
+            if self.episode_wind_active:
+                print("Episode wind active")
+                f_magnitude = self.rng.uniform(0, 0.005)
+                f_direction = self.rng.uniform(-1, 1, 3)
+                f_direction[2] = 0
+                f_direction /= np.linalg.norm(f_direction[:2])
+                self.wind_force = self.wind_force_scale * f_magnitude * f_direction
+            else:
+                self.wind_force = np.array([0.0, 0.0, 0.0])
+
+        if self.use_graphics:
+            self._p.configureDebugVisualizer(self._p.COV_ENABLE_RENDERING, 1)
 
     def _getObservation(self):
         """
@@ -603,6 +610,7 @@ class BaseDroneController(gym.Env):
 
     def setWindEffects(self, flag: bool):
         """Enable or diable wind effects."""
+        print(f"Wind effect set to: {flag}")
         self._wind_effect_active = flag
 
     def setStaticBlocks(self, flag: bool):

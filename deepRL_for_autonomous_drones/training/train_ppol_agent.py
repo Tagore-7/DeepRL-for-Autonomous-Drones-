@@ -20,7 +20,6 @@ from fsrl.data import FastCollector
 from deepRL_for_autonomous_drones.config.ppol_cfg import TrainCfg, DroneLandingCfg
 
 from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControllerRPM
-from deepRL_for_autonomous_drones.envs.Base_Drone_Controller import BaseDroneController
 
 TASK_TO_CFG = {"SafetyDroneLanding-v0": DroneLandingCfg}
 WORKER_MAPPING = {
@@ -32,30 +31,32 @@ WORKER_MAPPING = {
 }
 
 
-# def make_training_env(task, seed):
-#     env = gym.make(task)
-#     env = FlattenObservation(env)
-#     env.reset(seed=seed)
-#     return env
+def make_env(task, graphics: bool = False):
+    render_mode = "human" if graphics else None
+    env = gym.make(task, render_mode=render_mode, graphics=graphics)
+    env = FlattenObservation(env)
+    env.reset()
+    return env
 
 
 def make_training_env(task):
     env = gym.make(task)
     env = FlattenObservation(env)
+    # env.reset()
     return env
 
 
 @pyrallis.wrap()
 def train(args: TrainCfg = TrainCfg):
 
-    # update config
+    # ---- update config ----#
     cfg, old_cfg = asdict(args), asdict(TrainCfg())
     differing_values = {key: cfg[key] for key in cfg.keys() if cfg[key] != old_cfg[key]}
     cfg = asdict(TASK_TO_CFG[args.task]())
     cfg.update(differing_values)
     args = types.SimpleNamespace(**cfg)
 
-    # setup logger
+    # ---- setup logger ----#
     default_cfg = asdict(TASK_TO_CFG[args.task]())
     if args.name is None:
         args.name = auto_name(default_cfg, cfg, args.prefix, args.suffix)
@@ -67,8 +68,7 @@ def train(args: TrainCfg = TrainCfg):
     # logger = TensorboardLogger(args.logdir, log_txt=True, name=args.name)
     logger.save_config(cfg, verbose=args.verbose)
 
-    # demo_env = gym.make(args.task)
-    # demo_env = make_training_env(args.task, args.seed)
+    # demo_env = make_env(args.task, graphics=False)
     demo_env = make_training_env(args.task)
 
     agent = PPOLagAgent(
@@ -106,15 +106,16 @@ def train(args: TrainCfg = TrainCfg):
     worker = WORKER_MAPPING.get(args.worker)
     if worker is None:
         raise ValueError(f"Unknown worker type: {args.worker}")
-    # train_envs = worker([lambda: gym.make(args.task) for _ in range(training_num)])
-    # test_envs = worker([lambda: gym.make(args.task) for _ in range(args.testing_num)])
+
+    # train_envs = worker([lambda: make_env(args.task) for _ in range(training_num)])
+    # test_envs = worker([lambda: make_env(args.task) for _ in range(args.testing_num)])
 
     train_envs = worker([lambda: make_training_env(args.task) for _ in range(training_num)])
     test_envs = worker([lambda: make_training_env(args.task) for _ in range(args.testing_num)])
+
     # train_envs = worker([lambda: make_training_env(args.task, args.seed) for _ in range(training_num)])
     # test_envs = worker([lambda: make_training_env(args.task, args.seed) for _ in range(args.testing_num)])
 
-    # start training
     agent.learn(
         train_envs=train_envs,
         test_envs=test_envs,
@@ -133,9 +134,8 @@ def train(args: TrainCfg = TrainCfg):
     )
 
     if __name__ == "__main__":
-        # env = gym.make(args.task)
         # env = make_training_env(args.task, args.seed)
-        env = make_training_env(args.task)
+        env = make_env(args.task, graphics=args.render)
 
         agent.policy.eval()
         collector = FastCollector(agent.policy, env)
