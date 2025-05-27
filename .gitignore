@@ -4,6 +4,8 @@ env_logs
 logs
 wandb
 benchmark_results
+sb3_runs_nonconstrained
+ppo_moo.db
 *.zip
 .vscode
 
