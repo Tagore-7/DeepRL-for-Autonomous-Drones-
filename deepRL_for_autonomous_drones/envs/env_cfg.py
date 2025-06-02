@@ -12,9 +12,10 @@ class EnvCfg:
     gravity: float = -9.8
     leg_contact_reward: int = 100
     model_name_to_save: str = "drone_landing_model_using_ppo"
-    visual_mode: str = "Direct"
+    visual_mode: str = "DIRECT"
     discount_factor: float = 0.99
-    reward_function: int = 1
+    reward_function: int = 4
+    cost_function: int = 2
     debug_axes: bool = False
     add_obstacles: bool = True
     enable_wind: bool = True

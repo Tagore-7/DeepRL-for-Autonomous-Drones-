@@ -12,9 +12,9 @@ from deepRL_for_autonomous_drones.envs.env_cfg import EnvCfg
 
 class DroneControllerRPM(BaseDroneController):
     def __init__(self, render_mode=None, graphics=False):
-        # super(DroneControllerRPM, self).__init__(render_mode=None, graphics=False)
         super().__init__(render_mode=render_mode, graphics=graphics)
         self.reward_function = self.args.reward_function
+        self.cost_function = self.args.cost_function
 
     def _actionSpace(self):
         """Sets the action space of the environment."""
@@ -234,11 +234,6 @@ class DroneControllerRPM(BaseDroneController):
             # if self.enable_ground_effect:
             #     self._groundEffect(clipped_action)
 
-            # if self.enable_wind and self._wind_effect_active:
-            #     p_s = self.rng.uniform(0, 1)  # Probability for wind at each step
-            #     if p_s < 0.3:
-            #         self._dragWind()
-
             self.drone.last_clipped_action = clipped_action
 
             if self.use_graphics or self.render_mode == "human" or self.visual_mode.upper() == "GUI":
@@ -259,68 +254,30 @@ class DroneControllerRPM(BaseDroneController):
         self.drone.updateAndStoreKinematicInformation()
 
         observation = self._getObservation()
-        cost, tilt_cost, spin_cost, lidar_cost = self._calculateCost(observation)
-        info = {
-            "cost": cost,
-            "tilt_cost": tilt_cost,
-            "spin_cost": spin_cost,
-            "lidar_cost": lidar_cost,
-        }
+        # cost, tilt_cost, spin_cost, lidar_cost = self._calculateCost(observation)
+        # info = {
+        #     "cost": cost,
+        #     "tilt_cost": tilt_cost,
+        #     "spin_cost": spin_cost,
+        #     "lidar_cost": lidar_cost,
+        # }
 
-        reward = self._computeReward(observation, action, self.reward_function, tilt_cost, spin_cost, lidar_cost)
+        # reward = self._computeReward(observation, action, self.reward_function, tilt_cost, spin_cost, lidar_cost)
+
+        # cost = self._calculateCost(observation)
+        # info = {
+        #     "cost": cost,
+        # }
+        # info = compute_cost(self, observation)
+
+        info = self._computeCost(observation, self.cost_function)
+        reward = self._computeReward(observation, action, self.reward_function)
+
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
         truncated = self.afterStep(truncated)
 
         return observation, reward, terminated, truncated, info
-
-    def _calculateCost(self, observation):
-        cost = 0.0
-        lidar_cost = 0.0
-        tilt_cost = 0.0
-        spin_cost = 0.0
-
-        if self.observation_type in [2, 4]:
-            # ---- Lidar cost ----#
-            lidar_obs_distances = observation["lidar"]
-            min_distance = float(np.min(lidar_obs_distances) * self.LIDAR_MAX_DISTANCE)
-
-            # The CF2X crazyflie is roughly 0.056m in width
-            threshold = 0.1
-            if min_distance < threshold:
-                lidar_cost = (threshold - min_distance) / threshold
-                lidar_cost = np.clip(lidar_cost, 0, 1.0)
-                cost += lidar_cost
-
-        # ---- Plane crash cost ----#
-        if self._p.getContactPoints(self.drone.getDroneID(), self.plane):
-            cost += 5.0
-            # self.logger.info("Crashed into plane")
-            self.crashed = True
-
-        # ---- Obstacle crash cost ----#
-        if self.add_obstacles:
-            if any(self._p.getContactPoints(self.drone.getDroneID(), tree) for tree in self.trees):
-                cost += 5.0
-                # self.logger.info("Crashed into a tree")
-                self.crashed = True
-
-        obs = self.drone.getDroneStateVector()
-        roll, pitch, _yaw = obs[7:10]
-        wx, wy, wz = obs[13:16]
-        tilt_penalty = abs(roll) + abs(pitch)
-        spin_penalty = abs(wx) + abs(wy) + abs(wz)
-        # tilt_cost = 0.1 * tilt_penalty
-        # spin_cost = 0.1 * spin_penalty
-
-        tilt_cost = np.clip(tilt_penalty / np.pi, 0, 1.0) * 0.5  # max ~0.5
-        spin_cost = np.clip(spin_penalty / 20.0, 0, 1.0) * 0.5  # max ~0.5
-        cost += tilt_cost + spin_cost
-
-        # cost /= self.CTRL_STEPS
-
-        # TODO: Change this so lidar_cost isn't always being returned, ie when no obstacles
-        return float(cost), float(tilt_cost), float(spin_cost), float(lidar_cost)
 
     def _computeTerminated(self):
         """Determines if the environment is terminated or not."""
@@ -361,4 +318,5 @@ class DroneControllerRPM(BaseDroneController):
                 # self.drone.set_bullet_client(self._p)
         # if mode != "rgb_array":
         #     return np.array([])
-        # return
+        else:
+            return None

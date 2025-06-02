@@ -12,7 +12,8 @@ class TrainCfg:
     thread: int = 4  # if use "cpu" to train
     seed: int = 10
     # algorithm params
-    lr: float = 5e-4
+    # lr: float = 5e-4
+    lr: float = 3e-4
     hidden_sizes: Tuple[int, ...] = (128, 128)
     unbounded: bool = False
     last_layer_scale: bool = False
@@ -69,4 +70,12 @@ class TrainCfg:
 class DroneLandingCfg(TrainCfg):
     epoch: int = 1500
     # cost_limit = 25
-    cost_limit: float = 50
+    cost_limit: float = 5
+    step_per_epoch: int = 16000
+    repeat_per_collect: int = 7
+    batch_size: int = 128
+    gamma: float = 0.96
+    eps_clip: float = 0.25
+    vf_coef: float = 0.74
+    gae_lambda: float = 0.97
+    training_num: int = 16

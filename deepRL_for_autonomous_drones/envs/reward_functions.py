@@ -2,7 +2,7 @@ import pybullet as p
 import numpy as np
 
 
-def firstRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, lidar_cost=0.0):
+def safetyRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, lidar_cost=0.0):
     """
     Computes the reward function based on the author's paper: Towards end-to-end control for UAV autonomous landing via deep reinforcement learning,
 
@@ -19,63 +19,123 @@ def firstRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, 
         action[3],
     )  # Actions from the agent
 
+    plane_penalty = 0
+
     rel_pos = np.array([px, py, pz]) - env.target_pos
     rel_vel = np.array([vx, vy, vz]) - np.array([0, 0, 0])
     distance_penalty = np.linalg.norm(rel_pos)  # Distance penalty
     velocity_penalty = np.linalg.norm(rel_vel)  # Velocity penalty
     action_penalty = np.linalg.norm([ax, ay, az, aw])  # Action penalty
+    tilt_penalty = abs(roll) + abs(pitch)  # Weighted penalty for large tilt
+    spin_penalty = abs(wx) + abs(wy) + abs(wz)  # Weighted penalty for high spin
 
     # Compute shaping reward
-    shaping = -100 * distance_penalty - 10 * velocity_penalty - 1 * action_penalty
+    shaping = -100 * distance_penalty - 10 * velocity_penalty - 1 * action_penalty - 5 * tilt_penalty - 5 * spin_penalty
 
     # Check if drone has landed safely
     contact_points = p.getContactPoints(env.drone.getDroneID(), env.launch_pad)
 
-    reward = 0
-
     if contact_points:
         if abs(vx) <= 0.1 and abs(vy) <= 0.1 and abs(vz) <= 0.1:
-            # print("Super soft landing")
-            env.logger.info("Super soft landing")
+            print("Super soft landing")
         elif abs(vx) < 0.3 and abs(vy) < 0.3 and abs(vz) < 0.3:
-            # print("Landed")
-            env.logger.info("Landed")
+            print("Landed")
         elif abs(vx) < 0.5 and abs(vy) < 0.5 and abs(vz) < 0.5:
-            # print("Hard landing")
-            env.logger.info("Hard landing")
+            print("Hard landing")
         else:
-            # print("Crashed")
-            env.logger.info("Crashed")
+            print("Crashed")
+        env.c = 10 * (1 - abs(ax)) + 10 * (1 - abs(ay)) + 10 * (1 - abs(az)) + 10 * (1 - abs(aw))  # Bonus for throttle tending to zero
+        shaping += env.c
+        env.landed = True
 
+    contact_points_plane = p.getContactPoints(env.drone.getDroneID(), env.plane)
+    if contact_points_plane:
+        plane_penalty -= 100
+        if abs(roll) > 1 or abs(pitch) > 1:
+            shaping -= 50
+        env.crashed = True
+
+    shaping += obstacleRewardShaping(env)
+
+    # Reward difference (temporal difference shaping)
+    reward = shaping if env.previous_shaping is None else shaping - env.previous_shaping
+    env.previous_shaping = shaping
+
+    reward = reward + plane_penalty
+    return reward / 100
+
+
+def firstRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, lidar_cost=0.0):
+    """
+    Computes the reward function based on the author's paper: Towards end-to-end control for UAV autonomous landing via deep reinforcement learning,
+
+    """
+
+    # ---- CONSTANTS ----#
+    DISTANCE_WEIGHT = 100.0  # -100
+    VELOCITY_WEIGHT = 20.0  # -10
+    ACTION_WEIGHT = 1.0  # -1
+    SOFT_LAND_REWARD = 50.0
+    HARD_LAND_REWARD = 10.0
+    ALIVE_BONUS = 1.0
+    SCALE = 100.0
+
+    obs = env.drone.getDroneStateVector()
+    px, py, pz = obs[0:3]  # Position
+    vx, vy, vz = obs[10:13]  # Linear velocity
+    roll, pitch, _yaw = obs[7:10]
+    ax, ay, az, aw = action
+
+    rel_pos = np.array([px, py, pz]) - env.target_pos
+    rel_vel = np.array([vx, vy, vz]) - np.array([0, 0, 0])
+
+    distance_penalty = np.linalg.norm(rel_pos)  # Distance penalty
+    velocity_penalty = np.linalg.norm(rel_vel)  # Velocity penalty
+    action_penalty = np.linalg.norm([ax, ay, az, aw])  # Action penalty
+
+    # Compute shaping reward
+    shaping = -DISTANCE_WEIGHT * distance_penalty - VELOCITY_WEIGHT * velocity_penalty - ACTION_WEIGHT * action_penalty
+
+    # --- lidar proximity shaping (soft buffer) ----------------------
+    if env.observation_type in (2, 4) and env.add_obstacles:
+        lidar_min = np.min(observation["lidar"]) * env.LIDAR_MAX_DISTANCE
+        prox_thr = 0.24  # ↑ 50 cm buffer
+        if lidar_min < prox_thr:
+            lidar_pen = (prox_thr - lidar_min) / prox_thr  # 0→1
+            shaping -= 20.0 * lidar_pen  # extra term
+
+    # Check if drone has landed safely
+    contact_points = p.getContactPoints(env.drone.getDroneID(), env.launch_pad)
+    landing_bonus = 0.0
+    if contact_points:
         safe_landing = abs(vx) <= 0.3 and abs(vy) <= 0.3 and abs(vz) <= 0.3
-
-        if safe_landing:
-            reward += 50.0  # Big positive terminal reward
-        else:
-            reward += 10.0  # Lesser reward for hard landings
-
+        landing_bonus = SOFT_LAND_REWARD if safe_landing else HARD_LAND_REWARD
         env.c = 10 * (1 - abs(ax)) + 10 * (1 - abs(ay)) + 10 * (1 - abs(az)) + 10 * (1 - abs(aw))  # Bonus for throttle tending to zero
         shaping += env.c
         env.landed = True
 
     # Reward difference (temporal difference shaping)
-    # reward = shaping if env.previous_shaping is None else shaping - env.previous_shaping
-    # env.previous_shaping = shaping
-
-    # New
-    reward += shaping - env.previous_shaping if env.previous_shaping is not None else 0.0
+    # delta = shaping if env.previous_shaping is None else shaping - env.previous_shaping
+    delta = shaping - (env.previous_shaping or 0.0)
     env.previous_shaping = shaping
 
     # New: Additional shaping reward
-    proximity_bonus = max(0, 5.0 - distance_penalty)  # Up to 5 pts as drone gets close
-    reward += proximity_bonus
+    # proximity_bonus = max(0, 5.0 - distance_penalty)  # Up to 5 pts as drone gets close
+    # reward += proximity_bonus
+
+    # d = 0.5 * np.pi
+    # alive: bool = abs(pitch) <= d and abs(roll) <= d
+    # alive_reward = 1.0 if alive else -10.0
+    # reward += alive_reward
 
     # Add safe-hover bonus if clear from obstacles and not spinning
-    alive_bonus = 0.0
-    if tilt_cost < 0.2 and spin_cost < 0.2 and lidar_cost < 0.2:
-        alive_bonus += 2.0
+    alive = tilt_cost < 0.4 and spin_cost < 0.4 and lidar_cost < 0.2
+    # if alive:
+    #     reward += ALIVE_BONUS
 
-    reward = reward + alive_bonus
+    reward = delta + landing_bonus + (ALIVE_BONUS if alive else 0.0)
+    reward = reward / SCALE
+
     return reward
 
 
@@ -296,4 +356,5 @@ reward_functions = {
     1: firstRewardFunction,
     2: secondRewardFunction,
     3: thirdRewardFunction,
+    4: safetyRewardFunction,
 }

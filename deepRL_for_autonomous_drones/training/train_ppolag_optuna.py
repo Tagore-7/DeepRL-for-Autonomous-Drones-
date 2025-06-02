@@ -19,100 +19,140 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from deepRL_for_autonomous_drones import envs
 
 from fsrl.agent import PPOLagAgent
+from fsrl.utils.exp_util import seed_all
 from fsrl.utils import BaseLogger, TensorboardLogger, WandbLogger
 from tianshou.env import BaseVectorEnv, DummyVectorEnv, RayVectorEnv, ShmemVectorEnv, SubprocVectorEnv
 
-# from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControllerRPM
+WORKER_MAPPING = {
+    "BaseVectorEnv": BaseVectorEnv,
+    "DummyVectorEnv": DummyVectorEnv,
+    "RayVectorEnv": RayVectorEnv,
+    "SubprocVectorEnv": SubprocVectorEnv,
+    "ShmemVectorEnv": ShmemVectorEnv,
+}
 
 
-def make_env(task: str, seed: int):
-    def _init():
-        env = gym.make(task)
-        env = FlattenObservation(env)
-        env = Monitor(env)
-        env.reset(seed=seed)
-        return env
+def make_env(task, seed: int = 42, graphics: bool = False):
+    render_mode = "human" if graphics else None
+    env = gym.make(task, render_mode=render_mode, graphics=graphics)
+    env = FlattenObservation(env)
+    # env.reset(seed=seed)
+    return env
 
-    return _init
+
+# def sample_ppo_hparams(trial: optuna.Trial) -> Dict[str, Any]:
+#     return {
+#         "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
+#         "gamma": trial.suggest_float("gamma", 0.95, 0.999, step=0.001),
+#         "lr": trial.suggest_float("lr", 1e-5, 3e-4, log=True),
+#         "gae_lambda": trial.suggest_float("gae_lambda", 0.9, 0.98),
+#         "vf_coef": trial.suggest_float("vf_coef", 0.1, 1.0),
+#         "eps_clip": trial.suggest_float("eps_clip", 0.1, 0.3),
+#         "hidden_sizes": tuple([trial.suggest_categorical("hidden_sizes", [64, 128, 256])] * 2),
+#         "training_num": trial.suggest_int("training_num", 8, 20, step=4),
+#         "step_per_epoch": trial.suggest_int("step_per_epoch", 8000, 20000, step=2000),
+#         "repeat_per_collect": trial.suggest_int("repeat_per_collect", 1, 10),
+#         "cost_limit": trial.suggest_categorical("cost_limit", [5, 10, 20]),
+#         "target_kl": trial.suggest_float("target_kl", 0.02, 0.08, step=0.02),
+#     }
 
 
 def sample_ppo_hparams(trial: optuna.Trial) -> Dict[str, Any]:
+    """Search only the variables that still look uncertain and
+    keep the rest close to the Pareto-winner you selected."""
     return {
-        "n_steps": trial.suggest_int("n_steps", 512, 4096, step=512),
-        "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
-        "gamma": trial.suggest_float("gamma", 0.95, 0.999, step=0.001),
-        "learning_rate": trial.suggest_float("lr", 1e-5, 3e-4, log=True),
-        "gae_lambda": trial.suggest_float("gae_lambda", 0.9, 0.98),
-        "clip_range": trial.suggest_float("clip_range", 0.1, 0.3),
-        "ent_coef": trial.suggest_float("ent_coef", 1e-5, 0.01, log=True),
+        # freeze parameters that were already near-optimal
+        "batch_size": 64,
+        "hidden_sizes": (128, 128),
+        "step_per_epoch": 20_000,
+        "cost_limit": 5,
+        "gamma": trial.suggest_float("gamma", 0.96, 0.99),
+        "repeat_per_collect": trial.suggest_int("repeat_per_collect", 7, 11),
+        "lr": trial.suggest_float("lr", 1e-5, 4e-5, log=True),
+        "eps_clip": trial.suggest_float("eps_clip", 0.18, 0.26),
+        "gae_lambda": trial.suggest_float("gae_lambda", 0.94, 0.98),
         "vf_coef": trial.suggest_float("vf_coef", 0.1, 1.0),
-        "net_arch": [trial.suggest_categorical("hidden", [64, 128, 256])] * 2,
-        "num_envs": trial.suggest_int("num_envs", 4, 48, step=4),
+        "target_kl": trial.suggest_float("target_kl", 0.04, 0.08, step=0.02),
+        "training_num": trial.suggest_int("training_num", 8, 16, step=4),
     }
 
 
-def rollout_cost_reward(model, env, episodes: int = 20):
-    rewards, costs = [], []
-    for _ in range(episodes):
-        obs, _ = env.reset()
-        ep_r = ep_c = 0.0
-        done = False
-        while not done:
-            act, _ = model.predict(obs, deterministic=True)
-            obs, r, term, trunc, info = env.step(act)
-            ep_r += r
-            ep_c += info.get("cost", 0.0)
-            done = term or trunc
-        rewards.append(ep_r)
-        costs.append(ep_c)
-    return float(np.mean(rewards)), float(np.mean(costs))
+def evaluate_agent(agent, env, episodes=10):
+    rews, lens, costs = agent.evaluate(
+        test_envs=env,
+        eval_episodes=episodes,
+        render=False,
+        train_mode=False,
+    )
+    return float(rews), float(costs)
 
 
 def objective(trial: optuna.Trial, task: str, seed: int, train_epochs: int):
-    params = sample_ppo_hparams(trial)
-    net_arch = params.pop("net_arch")
-    num_envs = params.pop("num_envs")
+    try:
+        params = sample_ppo_hparams(trial)
+        training_num = params.pop("training_num")
+        batch_size = params.pop("batch_size")
+        step_per_epoch = params.pop("step_per_epoch")
+        repeat_per_collect = params.pop("repeat_per_collect")
 
-    vec_env = ShmemVectorEnv([make_env(task, seed + i) for i in range(num_envs)])
+        demo_env = make_env(task, seed=seed)
+        seed_all(seed)
 
-    cost_limit = 50.0
-    use_lagrangian = True
+        logger = TensorboardLogger("tensorboard", log_txt=True, name="PPOL_optuna")
 
-    agent = PPOLagAgent(
-        env=vec_env,
-        logger=TensorboardLogger(),  # or TensorboardLogger
-        device="cpu",
-        seed=seed,
-        cost_limit=cost_limit,
-        use_lagrangian=use_lagrangian,
-        hidden_sizes=net_arch,
-        **params,  # n_steps, lr, etc.
-    )
+        agent = PPOLagAgent(
+            env=demo_env,
+            logger=logger,
+            device="cpu",
+            seed=seed,
+            use_lagrangian=True,
+            **params,  # n_steps, lr, etc.
+        )
 
-    agent.learn(vec_env, epoch=train_epochs)
+        training_num_workers = min(training_num, 20)
+        worker = WORKER_MAPPING.get("SubprocVectorEnv")
+        if worker is None:
+            raise ValueError("Unknown worker type")
 
-    vec_env.close()
-    eval_env = make_env(task, seed + 10)()
-    reward, cost = rollout_cost_reward(agent, eval_env, episodes=10)
-    eval_env.close()
+        train_envs = worker([lambda: make_env(task) for _ in range(training_num_workers)])
 
-    trial.set_user_attr("mean_reward", reward)
-    trial.set_user_attr("mean_cost", cost)
+        agent.learn(
+            train_envs=train_envs,
+            epoch=train_epochs,
+            batch_size=batch_size,
+            step_per_epoch=step_per_epoch,
+            repeat_per_collect=repeat_per_collect,
+            verbose=True,
+        )
 
-    return reward, cost
+        demo_env.close()
+        train_envs.close()
+
+        eval_env = make_env(task)
+        reward, cost = evaluate_agent(agent, eval_env, episodes=10)
+        eval_env.close()
+
+        print(f"[Trial {trial.number}] Reward: {reward:.2f}, Cost: {cost:.2f}")
+        trial.set_user_attr("mean_reward", reward)
+        trial.set_user_attr("mean_cost", cost)
+
+        return reward, cost
+    except Exception as e:
+        print(f"[Trial {trial.number}] FAILED with error: {e}")
+        raise
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", default="SafetyDroneLanding-v0")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--trials", type=int, default=40)
-    parser.add_argument("--train-epochs", type=int, default=30)
+    parser.add_argument("--trials", type=int, default=60)
+    parser.add_argument("--train-epochs", type=int, default=60)
     parser.add_argument("--storage", default="sqlite:///ppo_moo.db", help="Optuna storage URI")
     args = parser.parse_args()
 
     study = optuna.create_study(
-        study_name=f"PPO-{args.task}-MOO",
+        study_name=f"PPOL-{args.task}-MOO",
         directions=("maximize", "minimize"),
         sampler=optuna.samplers.NSGAIISampler(seed=args.seed),
         storage=args.storage,
@@ -120,13 +160,12 @@ if __name__ == "__main__":
     )
 
     study.optimize(
-        lambda t: objective(t, args.task, args.seed, args.train_steps),
+        lambda t: objective(t, args.task, args.seed, args.train_epochs),
         n_trials=args.trials,
-        show_progress_bar=True,
     )
 
     df = study.trials_dataframe()
-    df.to_csv("ppo_moo_trials.csv", index=False)
+    df.to_csv("ppol_moo_trials.csv", index=False)
     print("Parento-optimal (reward, cost):")
     for t in study.best_trials:
-        print(f" Trail {t.number}: R ={t.values[0]:.2f}, C={t.values[1]:.2f}")
+        print(f" Trial {t.number}: R ={t.values[0]:.2f}, C={t.values[1]:.2f}")

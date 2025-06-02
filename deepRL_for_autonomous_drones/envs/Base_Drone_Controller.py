@@ -17,6 +17,7 @@ from pybullet_utils import bullet_client
 from importlib.resources import files
 from deepRL_for_autonomous_drones.utils.Lidar import Lidar
 from deepRL_for_autonomous_drones.envs.reward_functions import reward_functions
+from deepRL_for_autonomous_drones.envs.cost_functions import cost_functions
 from deepRL_for_autonomous_drones.envs.drone import Drone
 from deepRL_for_autonomous_drones.envs.obstacles import generateStaticTrees, loadMovingBlocks, loadStaticBlocks, loadTorusObstacles
 from deepRL_for_autonomous_drones.envs.env_cfg import EnvCfg
@@ -62,8 +63,8 @@ class BaseDroneController(gym.Env):
         self.args = EnvCfg
         self.render_mode = render_mode
         self.use_graphics = graphics or (render_mode == "human")
-        self._init_logger(rank=self.worker_id if hasattr(self, "worker_id") else None)
-        self.logger.info("Initialized logger for this environment.")
+        # self._init_logger(rank=self.worker_id if hasattr(self, "worker_id") else None)
+        # self.logger.info("Initialized logger for this environment.")
 
         self._p = self._setup_client_and_physics()
         self.bullet_client_id = self._p._client
@@ -248,8 +249,12 @@ class BaseDroneController(gym.Env):
                 print(f"Error while setting up PyBullet client: {e}")
                 bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
 
+        # bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
         bc.setAdditionalSearchPath(pybullet_data.getDataPath())
         return bc
+
+    def getBulletClient(self):
+        return self._p
 
     def _actionSpace(self):
         """Implement in Subclasses"""
@@ -290,7 +295,7 @@ class BaseDroneController(gym.Env):
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
-            self.logger.info("Seed: %s", seed, exc_info=1)
+            # self.logger.info("Seed: %s", seed, exc_info=1)
             self.rng = np.random.default_rng(seed)
             if hasattr(self, "drone"):
                 self.drone.set_seed(seed)
@@ -302,7 +307,7 @@ class BaseDroneController(gym.Env):
         """
         # seed for reproducibility
         super().reset(seed=seed)
-        self.seed(seed)
+        # self.seed(seed)
         # if seed is not None:
         #     self._seed = seed
         #     self.logger.info("Seed: %s", seed, exc_info=1)
@@ -365,9 +370,6 @@ class BaseDroneController(gym.Env):
 
         # ---- Load obstacles if active ----#
         if self.add_obstacles:
-            # self._loadStaticBlocks()
-            # self._loadMovingBlocks()
-            # self._loadTorusObstacles()
             self._generateStaticTrees()
 
         # ---- Debug local drone axes ----#
@@ -382,8 +384,9 @@ class BaseDroneController(gym.Env):
             # ---- For testing wind at various percentages ----#
             self.episode_wind_active = self.wind_force_scale > 0.0
             if self.episode_wind_active:
-                print("Episode wind active")
-                f_magnitude = self.rng.uniform(0, 0.005)
+                # print("Episode wind active")
+                # f_magnitude = self.rng.uniform(0, 0.005)
+                f_magnitude = 0.5  # fixed max force
                 f_direction = self.rng.uniform(-1, 1, 3)
                 f_direction[2] = 0
                 f_direction /= np.linalg.norm(f_direction[:2])
@@ -413,6 +416,7 @@ class BaseDroneController(gym.Env):
         for i in range(self.drone.ACTION_BUFFER_SIZE):
             drone_state = np.hstack([drone_state, np.array(self.drone.action_buffer[i])])
 
+        assert not np.isnan(drone_state).any()
         if np.isnan(drone_state).any():
             print("[WARNING] Found NaNs in drone state observation")
             print(drone_state)
@@ -525,6 +529,14 @@ class BaseDroneController(gym.Env):
 
         return reward_functions[reward_function](self, observation, action, tilt_cost, spin_cost, lidar_cost)
 
+    def _computeCost(self, observation, cost_function):
+        """Calls the selected cost function and computes it."""
+        if cost_function not in cost_functions:
+            print(f"[WARNING] Invalid cost function '{cost_function}' selected. Using default: 1")
+            cost_function = 1
+
+        return cost_functions[cost_function](self, observation)
+
     def _generateStaticTrees(self):
         self.trees = []
         if self._trees_active and self.add_obstacles:
@@ -610,7 +622,7 @@ class BaseDroneController(gym.Env):
 
     def setWindEffects(self, flag: bool):
         """Enable or diable wind effects."""
-        print(f"Wind effect set to: {flag}")
+        # print(f"Wind effect set to: {flag}")
         self._wind_effect_active = flag
 
     def setStaticBlocks(self, flag: bool):
