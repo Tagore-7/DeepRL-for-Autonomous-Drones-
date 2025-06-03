@@ -8,6 +8,7 @@ from gymnasium.wrappers import FlattenObservation
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControllerRPM
+import matplotlib.pyplot as plt 
 
 COST_KEYS = {
     "total": "cost",
@@ -113,6 +114,14 @@ def main():
     out_path = os.path.join("evaluation", "ppo_wind_results.csv")
     df.to_csv(out_path, index=False)
     print(f"\nSaved wind sweep evaluation to {out_path}")
+
+    fig, (ax_r, ax_c) = plt.subplots(2, 1, sharex=True)
+    df.plot(x="wind", y="reward_mean", yerr="reward_std", ax=ax_r, color="steelblue", label="Reward")
+    df.plot(x="wind", y="total_mean", yerr="total_std", ax=ax_c, color="firebrick", label="Cost")
+    ax_r.set_ylabel("Reward");ax_c.set_ylabel("Cost");ax_c.set_xlabel("Wind scale")
+    ax_r.set_title("PPO robustness vs wind")
+    fig.tight_layout()
+    fig.savefig("ppo_wind_curve.png")
 
 
 if __name__ == "__main__":

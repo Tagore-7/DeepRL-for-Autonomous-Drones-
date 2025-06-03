@@ -17,8 +17,8 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from deepRL_for_autonomous_drones import envs
+from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControllerRPM
 
-# from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControllerRPM
 
 
 def make_env(task: str, seed: int):
@@ -27,6 +27,9 @@ def make_env(task: str, seed: int):
         env = FlattenObservation(env)
         env = Monitor(env)
         env.reset(seed=seed)
+
+        if hasattr(env.unwrapped, "setWindEffects"):
+            env.unwrapped.setWindEffects(False)
         return env
 
     return _init
@@ -43,7 +46,7 @@ def sample_ppo_hparams(trial: optuna.Trial) -> Dict[str, Any]:
         "ent_coef": trial.suggest_float("ent_coef", 1e-5, 0.01, log=True),
         "vf_coef": trial.suggest_float("vf_coef", 0.1, 1.0),
         "net_arch": [trial.suggest_categorical("hidden", [64, 128, 256])] * 2,
-        "num_envs": trial.suggest_int("num_envs", 4, 48, step=4),
+        "num_envs": trial.suggest_int("num_envs", 4, 32, step=4),
     }
 
 
@@ -63,7 +66,7 @@ def rollout_cost_reward(model, env, episodes: int = 20):
         costs.append(ep_c)
     return float(np.mean(rewards)), float(np.mean(costs))
 
-
+BEST_PATH = "best_ppo_with_no_wind.zip"
 def objective(trial: optuna.Trial, task: str, seed: int, train_steps: int):
     params = sample_ppo_hparams(trial)
     net_arch = params.pop("net_arch")
@@ -82,11 +85,22 @@ def objective(trial: optuna.Trial, task: str, seed: int, train_steps: int):
         **params,
     )
 
-    model.learn(total_timesteps=train_steps)
+    model.learn(total_timesteps=train_steps, progress_bar=True)
 
     vec_env.close()
     eval_env = make_env(task, seed + 10)()
     reward, cost = rollout_cost_reward(model, eval_env, episodes=10)
+    
+    if not os.path.isfile(BEST_PATH):
+        model.save(BEST_PATH)
+        trial.set_user_attr("saved", True)
+    else:
+        prev = optuna.load_study(study_name=STUDY_NAME, 
+                                 storage=args.storage).user_attrs.get("best_metrics")
+        if (reward > prev["reward"] and cost <= prev["cost"]):
+            model.save(BEST_PATH)
+            trial.set_user_attr("saved", True)
+            trial.study.set_user_attr("best_metrics", dict(reward=reward, cost=cost))
     eval_env.close()
 
     trial.set_user_attr("mean_reward", reward)
@@ -99,18 +113,21 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", default="SafetyDroneLanding-v0")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--trials", type=int, default=40)
-    parser.add_argument("--train-steps", type=int, default=300_000)
+    parser.add_argument("--trials", type=int, default=50)
+    parser.add_argument("--train-steps", type=int, default=15e6)
     parser.add_argument("--storage", default="sqlite:///ppo_moo.db", help="Optuna storage URI")
     args = parser.parse_args()
+    STUDY_NAME = f"PPO-{args.task}-MOO"
 
     study = optuna.create_study(
-        study_name=f"PPO-{args.task}-MOO",
+        study_name=STUDY_NAME,
         directions=("maximize", "minimize"),
         sampler=optuna.samplers.NSGAIISampler(seed=args.seed),
         storage=args.storage,
         load_if_exists=True,
     )
+
+    study.set_user_attr("best_metrics", dict(reward=-np.inf, cost=np.inf))
 
     study.optimize(
         lambda t: objective(t, args.task, args.seed, args.train_steps),
