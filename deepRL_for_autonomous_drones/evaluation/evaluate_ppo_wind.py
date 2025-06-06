@@ -1,3 +1,9 @@
+"""
+evaluate_ppo_wind.py
+"""
+
+
+
 import os
 import argparse
 import numpy as np
@@ -18,8 +24,8 @@ COST_KEYS = {
 }
 
 
-def make_env(task, seed=0, wind_scale=1.0):
-    env = gym.make(task, render_mode="human", graphics=True)
+def make_env(task, seed=0, wind_scale=1.0, graphics=True, render_mode="human"):
+    env = gym.make(task, render_mode=render_mode, graphics=graphics)
     env = FlattenObservation(env)
     env = Monitor(env)
     env.reset(seed=seed)
@@ -39,9 +45,10 @@ def find_latest_checkpoint(root_dir, algo, task):
 
 
 def rollout_with_cost(model, env, n_episodes: int):
+    env.render()
     stats = {k: [] for k in ["reward", *COST_KEYS]}
     lens = []
-
+    
     for _ in range(n_episodes):
         obs, _ = env.reset()
         totals = dict.fromkeys(stats, 0.0)
@@ -51,6 +58,8 @@ def rollout_with_cost(model, env, n_episodes: int):
         while not done:
             act, _ = model.predict(obs, deterministic=True)
             obs, r, term, trunc, info = env.step(act)
+
+            # env.render()
 
             totals["reward"] += r
             for key, inf_key in COST_KEYS.items():
@@ -76,23 +85,26 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", default="SafetyDroneLanding-v0")
     parser.add_argument("--root", default="sb3_runs_nonconstrained")
-    parser.add_argument("--episodes", type=int, default=1)
+    parser.add_argument("--episodes", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     wind_levels = np.linspace(0.0, 1.0, num=11)
     all_results = []
 
-    ckpt = find_latest_checkpoint(args.root, "PPO", args.task)
+    # ckpt = find_latest_checkpoint(args.root, "PPO", args.task)
+    ckpt = "/home/trkosire/Tims_RL_Project/DeepRL-for-Autonomous-Drones-/deepRL_for_autonomous_drones/training/best_ppo_with_no_wind.zip"
+
     if ckpt is None:
         print("No checkpoint for PPO")
         return
 
-    env = make_env(args.task, seed=args.seed, wind_scale=0.0)
-    model = PPO.load(ckpt, device="cuda")
 
     for wind in wind_levels:
         print(f"Evaluating PPO with wind level {wind:.1f}")
+        env = make_env(args.task, seed=args.seed, wind_scale=wind, graphics=True, render_mode="human")
+        model = PPO.load(ckpt, device="cpu")
+
         if hasattr(env.unwrapped, "setWindScale"):
             env.unwrapped.setWindScale(wind)
 
@@ -107,11 +119,11 @@ def main():
             f"(tilt {metrics['tilt_mean']:4.2f}, spin {metrics['spin_mean']:4.2f}, "
             f"lidar {metrics['lidar_mean']:4.2f})"
         )
-    env.close()
+        env.close()
 
     df = pd.DataFrame(all_results)
     os.makedirs("evaluation", exist_ok=True)
-    out_path = os.path.join("evaluation", "ppo_wind_results.csv")
+    out_path = os.path.join("evaluation/csv_files/", "ppo_wind_results.csv")
     df.to_csv(out_path, index=False)
     print(f"\nSaved wind sweep evaluation to {out_path}")
 
@@ -121,7 +133,7 @@ def main():
     ax_r.set_ylabel("Reward");ax_c.set_ylabel("Cost");ax_c.set_xlabel("Wind scale")
     ax_r.set_title("PPO robustness vs wind")
     fig.tight_layout()
-    fig.savefig("ppo_wind_curve.png")
+    fig.savefig("pics/ppo_wind_curve.png")
 
 
 if __name__ == "__main__":

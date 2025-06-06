@@ -1,9 +1,15 @@
+"""
+Drone_Controller_RPM.py
+"""
+
+
 import time
 from gymnasium.spaces import Box, Dict
 import numpy as np
 import pybullet as p
 from deepRL_for_autonomous_drones.envs.Base_Drone_Controller import BaseDroneController
 from deepRL_for_autonomous_drones.envs.env_cfg import EnvCfg
+from pybullet_utils import bullet_client
 
 # import pybullet_data
 # import math
@@ -362,3 +368,4 @@ class DroneControllerRPM(BaseDroneController):
         # if mode != "rgb_array":
         #     return np.array([])
         # return
+
