@@ -42,6 +42,7 @@ class Lidar:
         ray_length,
         offset,
         launch_pad_id,
+        plane,
         draw_debug_line=False,
     ):
         """
@@ -67,9 +68,7 @@ class Lidar:
         """
 
         # ---- Compute rotation matrix to transform from sensor local coordinates to world coordinates ----#
-        R = self.rotation_matrix(
-            ray_orientation[0], ray_orientation[1], ray_orientation[2]
-        )
+        R = self.rotation_matrix(ray_orientation[0], ray_orientation[1], ray_orientation[2])
 
         # ---- Vertical range for the scan (-90 degress to 90 degrees elevation)
         elev_min = -math.pi / 2
@@ -79,8 +78,8 @@ class Lidar:
         ray_to = []
 
         # ---- Number of rays. Becomes 36 rays in 3D space ----#
-        num_horizontal = 6
-        num_vertical = 6
+        num_horizontal = 12
+        num_vertical = 12
 
         # ---- Generate 3D ray directions ----#
         for i in range(num_vertical):
@@ -113,13 +112,12 @@ class Lidar:
         raw_hit_results = p.rayTestBatch(ray_from, ray_to, numThreads=0)
 
         hit_results = []
-        for res in raw_hit_results:
-            if res[0] != launch_pad_id:
+        for idx, res in enumerate(raw_hit_results):
+            # ---- treat pad_id and plane_id as “no hits” so the drone can approach. ----#
+            if (res[0] != launch_pad_id) and (res[0] != plane):
                 hit_results.append(res)
             else:
-                hit_results.append(
-                    (-1, 0, 1.0, ray_to[raw_hit_results.index(res)])
-                )  # No hit, return max distance
+                hit_results.append((-1, 0, 1.0, ray_to[idx]))
 
         # ---- Optionally draw the rays ----#
         if draw_debug_line:
@@ -128,14 +126,10 @@ class Lidar:
                 for idx, res in enumerate(hit_results):
                     if res[0] != -1:
                         # ---- Hit detected: draw ray from sensor to hit point (red) ----#
-                        debug_id = p.addUserDebugLine(
-                            ray_from[idx], res[3], lineColorRGB=[1, 0, 0]
-                        )
+                        debug_id = p.addUserDebugLine(ray_from[idx], res[3], lineColorRGB=[1, 0, 0])
                     else:
                         # ---- No hit: draw ray from sensor to end point (green) ----#
-                        debug_id = p.addUserDebugLine(
-                            ray_from[idx], ray_to[idx], lineColorRGB=[0, 1, 0]
-                        )
+                        debug_id = p.addUserDebugLine(ray_from[idx], ray_to[idx], lineColorRGB=[0, 1, 0])
                     self.replace_item_uniqueIds.append(debug_id)
             else:
                 # ---- Update existing debug lines ----#

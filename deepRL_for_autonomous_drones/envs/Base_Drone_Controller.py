@@ -87,25 +87,31 @@ class BaseDroneController(gym.Env):
 
         # ---- Initialize curriculum-related flags (all start as OFF) ----#
         self._obstacles_active = False
-        self._wind_effect_active = False
-        self._static_blocks_active = False
-        self._donut_obstacles_active = False
-        self._moving_blocks_active = False
-
+        self._wind_effect_active = True
         self._trees_active = True
-        # if self.enable_curriculum_learning:
-        #     self._obstacles_active = False
-        #     self._wind_effect_active = False
-        #     self._static_blocks_active = False
-        #     self._donut_obstacles_active = False
-        #     self._moving_blocks_active = False
 
-        #     self._wind_effect_active = False
-        #     self._trees_active = False
+        if self.enable_curriculum_learning:
+            self._obstacles_active = False
+            self._wind_effect_active = False
+            #     self._static_blocks_active = False
+            #     self._donut_obstacles_active = False
+            #     self._moving_blocks_active = False
+            #     self._wind_effect_active = False
+            self._trees_active = False
 
         # wind force
         self.wind_force = np.array([0.0, 0.0, 0.0])
         self.wind_force_scale = 0.0
+        self.wind_magnitude: float = 0
+        self.episode_wind_active = False
+        self.current_wind_level = "none"
+        self.WIND_LEVELS = {
+            "none": 0.0,
+            "light_breeze": 2.24,  # 5 mph
+            "light": 4.47,  # 10 mph
+            "medium": 8.94,  # 20 mph
+            "high": 17.88,  # 40 mph
+        }
 
         # ---- Constants ----#
         self.alpha = np.array([1.0, 1.0, 1.0])
@@ -126,7 +132,8 @@ class BaseDroneController(gym.Env):
         self.CTRL_STEPS = self.EPISODE_LEN_SEC * self.CTRL_FREQ
 
         # ---- LIDAR settings ----#
-        self.LIDAR_NUM_RAYS = 36  # Number of LIDAR rays
+        # self.LIDAR_NUM_RAYS = 36  # Number of LIDAR rays
+        self.LIDAR_NUM_RAYS = 144  # Number of LIDAR rays
         self.LIDAR_MAX_DISTANCE = 10  # Max distance in meters a LIDAR ray can detect obstacles
         self.LIDAR_LINK_IDX = 4  # Index of the link from which the rays are emitted
         self.OFFSET = 0
@@ -152,8 +159,6 @@ class BaseDroneController(gym.Env):
         self.initial_reset = False
         self.at_reset = False
         self._seed = None
-
-        self.episode_wind_active = False
 
         self.rng = np.random.default_rng()
 
@@ -325,7 +330,7 @@ class BaseDroneController(gym.Env):
         self._resetEnvironment()
 
         # ---- Update and store the drones kinematic information ----#
-        # self._updateAndStoreKinematicInformation()
+        # self.drone.updateAndStoreKinematicInformation()
 
         obs = self._getObservation()
         if self.observation_type != 1:
@@ -376,6 +381,14 @@ class BaseDroneController(gym.Env):
         if self.debug_axes and self.visual_mode.upper() == "GUI":
             self._showDroneLocalAxes()
 
+        if self.enable_wind:
+            # self.calculateWind() # Old wind model
+            self._initWind()
+
+        if self.use_graphics:
+            self._p.configureDebugVisualizer(self._p.COV_ENABLE_RENDERING, 1)
+
+    def calculateWind(self):
         # ---- Calculate wind force if enabled ----#
         if self.enable_wind and self._wind_effect_active:
             # self.p_e = self.rng.uniform(0, 1)
@@ -383,8 +396,8 @@ class BaseDroneController(gym.Env):
 
             # ---- For testing wind at various percentages ----#
             self.episode_wind_active = self.wind_force_scale > 0.0
+            # self.episode_wind_active = True
             if self.episode_wind_active:
-                # print("Episode wind active")
                 # f_magnitude = self.rng.uniform(0, 0.005)
                 f_magnitude = 0.5  # fixed max force
                 f_direction = self.rng.uniform(-1, 1, 3)
@@ -394,8 +407,61 @@ class BaseDroneController(gym.Env):
             else:
                 self.wind_force = np.array([0.0, 0.0, 0.0])
 
-        if self.use_graphics:
-            self._p.configureDebugVisualizer(self._p.COV_ENABLE_RENDERING, 1)
+    def setWindLevel(self, level: str):
+        self.current_wind_level = level
+
+    ###################### NEW2 ####################################
+    def _initWind(self):
+        self.episode_wind_active = True
+        # self.p_e = self.rng.uniform(0, 1)
+        # self.episode_wind_active = self.p_e < 0.7
+
+        self._wind_direction = self.rng.uniform(-1, 1, 3)
+        self._wind_direction[2] = 0
+        self._wind_direction /= np.linalg.norm(self._wind_direction[:2]) + 1e-8
+
+    def _applyWindDrag(self):
+        """
+        https://www.grc.nasa.gov/www/k-12/VirtualAero/BottleRocket/airplane/drageq.html
+
+        Drag force formula:
+        F_drag = C_d * A * .5 * r * V^2
+
+        F_drag: drag force (Newtons)
+        C_d: drag coefficient
+        A: reference area (The frontal area of the drone being enacted upon)
+        r: air density (Typically 1.225 Kg/m^3 at sea level)
+        v: relative wind velocity with respect to the drone
+
+        A and C_d for drone taken from: https://github.com/jjshoots/PyFlyt/blob/master/PyFlyt/models/vehicles/cf2x/cf2x.yaml
+        """
+
+        if not (self.enable_wind and self._wind_effect_active):
+            return
+
+        wind_speed = self.WIND_LEVELS[self.current_wind_level]
+        if wind_speed == 0.0:
+            return
+
+        wind_velocity = wind_speed * self._wind_direction
+
+        state = self.drone.getDroneStateVector()
+        px, py, pz = state[0:3]  # Drone position
+        drone_velocity = np.array(state[10:13])
+
+        vel_rel = wind_velocity - drone_velocity
+        vel_mag = np.linalg.norm(vel_rel)
+
+        r_density = 1.225
+        C_d = 3.0
+        A_ref = 4e-4
+
+        F_drag = 0.5 * r_density * C_d * A_ref * vel_mag * vel_rel
+        self._p.applyExternalForce(self.drone.getDroneID(), -1, forceObj=F_drag, posObj=[px, py, pz], flags=self._p.WORLD_FRAME)
+
+        # ---- Only printing at certain steps to not spam console ----#
+        if self.pyb_step_counter % 240 == 0:
+            print(f"|F|={np.linalg.norm(F_drag):.3f} N  " f"level={self.current_wind_level}")
 
     def _getObservation(self):
         """
@@ -481,6 +547,7 @@ class BaseDroneController(gym.Env):
             self.LIDAR_MAX_DISTANCE,
             self.OFFSET,
             self.launch_pad,
+            self.plane,
             draw_debug_line=self.debug_axes,
         )
 

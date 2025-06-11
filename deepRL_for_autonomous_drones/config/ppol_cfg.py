@@ -61,7 +61,7 @@ class TrainCfg:
     logdir: str = "benchmark_results"
     project: str = "fast-safe-rl"
     group: Optional[str] = None
-    name: Optional[str] = None
+    name: Optional[str] = "ppol-no-wind-5"
     prefix: Optional[str] = "ppol"
     suffix: Optional[str] = ""
 
@@ -70,12 +70,13 @@ class TrainCfg:
 class DroneLandingCfg(TrainCfg):
     epoch: int = 1500
     # cost_limit = 25
-    cost_limit: float = 5
-    step_per_epoch: int = 16000
+    cost_limit: float = 6
     repeat_per_collect: int = 7
-    batch_size: int = 128
-    gamma: float = 0.96
-    eps_clip: float = 0.25
-    vf_coef: float = 0.74
-    gae_lambda: float = 0.97
-    training_num: int = 16
+    lr: float = 2.5e-5
+    # lr: float = 1e-4
+    gae_lambda: float = 0.95
+    vf_coef: float = 0.8
+    # hidden_sizes: Tuple[int, ...] = (64, 64)
+    step_per_epoch: int = 14000
+    target_kl: float = 0.06
+    lagrangian_pid: Tuple[float, ...] = (0.15, 0.005, 0.1)

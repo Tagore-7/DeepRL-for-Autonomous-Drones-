@@ -40,40 +40,25 @@ def make_env(task, seed: int = 42, graphics: bool = False):
     return env
 
 
-# def sample_ppo_hparams(trial: optuna.Trial) -> Dict[str, Any]:
-#     return {
-#         "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
-#         "gamma": trial.suggest_float("gamma", 0.95, 0.999, step=0.001),
-#         "lr": trial.suggest_float("lr", 1e-5, 3e-4, log=True),
-#         "gae_lambda": trial.suggest_float("gae_lambda", 0.9, 0.98),
-#         "vf_coef": trial.suggest_float("vf_coef", 0.1, 1.0),
-#         "eps_clip": trial.suggest_float("eps_clip", 0.1, 0.3),
-#         "hidden_sizes": tuple([trial.suggest_categorical("hidden_sizes", [64, 128, 256])] * 2),
-#         "training_num": trial.suggest_int("training_num", 8, 20, step=4),
-#         "step_per_epoch": trial.suggest_int("step_per_epoch", 8000, 20000, step=2000),
-#         "repeat_per_collect": trial.suggest_int("repeat_per_collect", 1, 10),
-#         "cost_limit": trial.suggest_categorical("cost_limit", [5, 10, 20]),
-#         "target_kl": trial.suggest_float("target_kl", 0.02, 0.08, step=0.02),
-#     }
-
-
 def sample_ppo_hparams(trial: optuna.Trial) -> Dict[str, Any]:
-    """Search only the variables that still look uncertain and
-    keep the rest close to the Pareto-winner you selected."""
     return {
-        # freeze parameters that were already near-optimal
-        "batch_size": 64,
-        "hidden_sizes": (128, 128),
-        "step_per_epoch": 20_000,
-        "cost_limit": 5,
-        "gamma": trial.suggest_float("gamma", 0.96, 0.99),
-        "repeat_per_collect": trial.suggest_int("repeat_per_collect", 7, 11),
-        "lr": trial.suggest_float("lr", 1e-5, 4e-5, log=True),
-        "eps_clip": trial.suggest_float("eps_clip", 0.18, 0.26),
-        "gae_lambda": trial.suggest_float("gae_lambda", 0.94, 0.98),
+        "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
+        "gamma": trial.suggest_float("gamma", 0.95, 0.999, step=0.001),
+        "lr": trial.suggest_float("lr", 1e-5, 4e-4, log=True),
+        "gae_lambda": trial.suggest_float("gae_lambda", 0.9, 0.98),
         "vf_coef": trial.suggest_float("vf_coef", 0.1, 1.0),
-        "target_kl": trial.suggest_float("target_kl", 0.04, 0.08, step=0.02),
-        "training_num": trial.suggest_int("training_num", 8, 16, step=4),
+        "eps_clip": trial.suggest_float("eps_clip", 0.1, 0.3),
+        "hidden_sizes": tuple([trial.suggest_categorical("hidden_sizes", [64, 128, 256])] * 2),
+        "training_num": trial.suggest_int("training_num", 12, 20, step=4),
+        "step_per_epoch": trial.suggest_int("step_per_epoch", 6000, 14000, step=2000),
+        "repeat_per_collect": trial.suggest_int("repeat_per_collect", 1, 10),
+        "cost_limit": trial.suggest_categorical("cost_limit", [5, 10]),
+        "target_kl": trial.suggest_float("target_kl", 0.02, 0.08, step=0.02),
+        "lagrangian_pid": (
+            trial.suggest_float("kp", 0.01, 0.2, log=True),  # Kp
+            trial.suggest_float("ki", 1e-5, 1e-2, log=True),  # Ki
+            trial.suggest_float("kd", 0.01, 0.2, log=True),  # Kd
+        ),
     }
 
 
@@ -90,6 +75,9 @@ def evaluate_agent(agent, env, episodes=10):
 def objective(trial: optuna.Trial, task: str, seed: int, train_epochs: int):
     try:
         params = sample_ppo_hparams(trial)
+        logger = TensorboardLogger("tensorboard", log_txt=True, name="PPOL_optuna")
+        logger.save_config(params, verbose=True)
+
         training_num = params.pop("training_num")
         batch_size = params.pop("batch_size")
         step_per_epoch = params.pop("step_per_epoch")
@@ -97,8 +85,6 @@ def objective(trial: optuna.Trial, task: str, seed: int, train_epochs: int):
 
         demo_env = make_env(task, seed=seed)
         seed_all(seed)
-
-        logger = TensorboardLogger("tensorboard", log_txt=True, name="PPOL_optuna")
 
         agent = PPOLagAgent(
             env=demo_env,
@@ -146,8 +132,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", default="SafetyDroneLanding-v0")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--trials", type=int, default=60)
-    parser.add_argument("--train-epochs", type=int, default=60)
+    parser.add_argument("--trials", type=int, default=40)
+    parser.add_argument("--train-epochs", type=int, default=1000)
     parser.add_argument("--storage", default="sqlite:///ppo_moo.db", help="Optuna storage URI")
     args = parser.parse_args()
 

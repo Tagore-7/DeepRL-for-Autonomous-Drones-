@@ -24,26 +24,42 @@ from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControll
 from deepRL_for_autonomous_drones.envs.Base_Drone_Controller import BaseDroneController
 
 
-def make_env(task, graphics: bool = False, wind_scale: float = 1.0):
+# def make_env(task, graphics: bool = False, wind_scale: float = 1.0):
+#     render_mode = "human" if graphics else None
+#     env = gym.make(task, render_mode=render_mode, graphics=graphics)
+#     env = FlattenObservation(env)
+
+#     env.unwrapped.setWindEffects(True)
+#     if hasattr(env.unwrapped, "setWindScale"):
+#         env.unwrapped.setWindScale(wind_scale)
+
+#     return env
+
+
+def make_env(task, graphics: bool = False, wind_level: str = "none"):
     render_mode = "human" if graphics else None
     env = gym.make(task, render_mode=render_mode, graphics=graphics)
     env = FlattenObservation(env)
 
     env.unwrapped.setWindEffects(True)
-    if hasattr(env.unwrapped, "setWindScale"):
-        env.unwrapped.setWindScale(wind_scale)
+    if hasattr(env.unwrapped, "setWindLevel"):
+        env.unwrapped.setWindLevel(wind_level)
 
     return env
 
 
 @dataclass
 class EvalConfig:
-    path: str = "../training/benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-50/ppol-c1dd"
+    # path: str = "../training/benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-10/ppol-74e2"
+
+    # path: str = "../training/benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-10/ppol-wind"
+    # path: str = "../training/benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-10/ppol-no-wind-2"
+    path: str = "../training/benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-6/ppol-no-wind-5"
     best: bool = True
-    eval_episodes: int = 20
-    parallel_eval: bool = True
+    eval_episodes: int = 1
+    parallel_eval: bool = False
     device: str = "cpu"
-    render: bool = False
+    render: bool = True
     train_mode: bool = False
 
 
@@ -53,7 +69,7 @@ def evaluate(args: EvalConfig = EvalConfig):
     task = cfg["task"]
 
     # ---- create a single environment once (reusing GUI) ----#
-    test_env = make_env(task, graphics=args.render, wind_scale=0.0)
+    test_env = make_env(task, graphics=args.render, wind_level="none")
 
     agent = PPOLagAgent(
         env=test_env,
@@ -68,14 +84,15 @@ def evaluate(args: EvalConfig = EvalConfig):
         last_layer_scale=cfg["last_layer_scale"],
     )
 
-    wind_levels = np.linspace(0.0, 1.0, num=11)
+    # wind_levels = np.linspace(0.0, 1.0, num=11)
     results = []
 
-    for wind in wind_levels:
-        print(f"Evaluating at wind level {wind:.1f}")
+    for level in ["none", "light_breeze", "light", "medium", "high"]:
+        # for level in ["light_breeze", "light", "medium", "high"]:
+        print(f"Evaluating at wind level: {level}")
 
-        if hasattr(test_env.unwrapped, "setWindScale"):
-            test_env.unwrapped.setWindScale(wind)
+        if hasattr(test_env.unwrapped, "setWindLevel"):
+            test_env.unwrapped.setWindLevel(level)
 
         rews, lens, cost = agent.evaluate(
             test_envs=test_env,
@@ -89,7 +106,7 @@ def evaluate(args: EvalConfig = EvalConfig):
 
         results.append(
             {
-                "wind": wind,
+                "wind_level": level,
                 "reward": np.mean(rews),
                 "cost": np.mean(cost),
                 "length": lens,
@@ -104,6 +121,65 @@ def evaluate(args: EvalConfig = EvalConfig):
     os.makedirs("evaluations", exist_ok=True)
     out_path = os.path.join("evaluations", "wind_results.csv")
     df.to_csv(out_path, index=False)
+
+
+# @pyrallis.wrap()
+# def evaluate(args: EvalConfig = EvalConfig):
+#     cfg, model = load_config_and_model(args.path, args.best)
+#     task = cfg["task"]
+
+#     # ---- create a single environment once (reusing GUI) ----#
+#     test_env = make_env(task, graphics=args.render, wind_scale=0.0)
+
+#     agent = PPOLagAgent(
+#         env=test_env,
+#         logger=BaseLogger(),
+#         device=args.device,
+#         use_lagrangian=cfg["use_lagrangian"],
+#         thread=cfg["thread"],
+#         seed=cfg["seed"],
+#         cost_limit=cfg["cost_limit"],
+#         hidden_sizes=cfg["hidden_sizes"],
+#         unbounded=cfg["unbounded"],
+#         last_layer_scale=cfg["last_layer_scale"],
+#     )
+
+#     wind_levels = np.linspace(0.0, 1.0, num=11)
+#     results = []
+
+#     for wind in wind_levels:
+#         print(f"Evaluating at wind level {wind:.1f}")
+
+#         if hasattr(test_env.unwrapped, "setWindScale"):
+#             test_env.unwrapped.setWindScale(wind)
+
+#         rews, lens, cost = agent.evaluate(
+#             test_envs=test_env,
+#             state_dict=model["model"],
+#             eval_episodes=args.eval_episodes,
+#             render=args.render,
+#             train_mode=args.train_mode,
+#         )
+
+#         print(f"Eval reward: {rews}, cost: {cost}, length: {lens}")
+
+#         results.append(
+#             {
+#                 "wind": wind,
+#                 "reward": np.mean(rews),
+#                 "cost": np.mean(cost),
+#                 "length": lens,
+#                 "algo": cfg["prefix"],
+#                 "seed": cfg["seed"],
+#                 "episodes": args.eval_episodes,
+#                 "cost_limit": cfg["cost_limit"],
+#             }
+#         )
+
+#     df = pd.DataFrame(results)
+#     os.makedirs("evaluations", exist_ok=True)
+#     out_path = os.path.join("evaluations", "wind_results.csv")
+#     df.to_csv(out_path, index=False)
 
 
 # @pyrallis.wrap()

@@ -214,7 +214,8 @@ class DroneControllerRPM(BaseDroneController):
 
         for _ in range(self.PYB_STEPS_PER_CTRL):
             if force_is_on and gust_active:
-                self._dragWind()
+                # self._dragWind() # Old dragWind
+                self._applyWindDrag()
 
             self.drone.physics(clipped_action)
 
@@ -225,9 +226,6 @@ class DroneControllerRPM(BaseDroneController):
                 cameraPitch=-45,
                 cameraTargetPosition=position,
             )
-
-            # if force_is_on and gust_active:
-            #     self._dragWind()
 
             self._p.stepSimulation()
 

@@ -7,6 +7,7 @@ benchmark_results
 sb3_runs_nonconstrained
 */evaluation/evaluation/
 */evaluation/evaluations/
+*/training/optuna/
 tensorboard
 *.zip
 .vscode

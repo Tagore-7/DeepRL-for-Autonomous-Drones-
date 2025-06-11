@@ -4,6 +4,8 @@ import numpy as np
 
 def computeSimpleCost(env, observation):
     info = {}
+    lidar_cost = 0.0
+    collision_cost = 0.0
     cost = 0.0
 
     if env.observation_type in [2, 4]:
@@ -22,11 +24,17 @@ def computeSimpleCost(env, observation):
         # arm="0.0397", so arm length is ~4 cm → full size (motor-to-motor) is ~8 cm, or 0.08m
         # testing threshold atm as drone size x 4, so 0.08m x 4 = 0.32m
         threshold = 0.32
+        # threshold = 0.24
         if min_distance < threshold:
             lidar_cost = (threshold - min_distance) / threshold
-            # lidar_cost = np.clip(lidar_cost, 0, 1.0)
-            cost += lidar_cost
+            lidar_cost = np.clip(lidar_cost, 0, 1.0)
 
+    if env.add_obstacles:
+        if any(env.getBulletClient().getContactPoints(env.drone.getDroneID(), tree) for tree in env.trees):
+            collision_cost = 5.0
+            env.crashed = True
+
+    cost = lidar_cost + collision_cost
     info["cost"] = cost
     return info
 
