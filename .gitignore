@@ -8,6 +8,8 @@ sb3_runs_nonconstrained
 */evaluation/evaluation/
 */evaluation/evaluations/
 ppo_moo.db
+pics
+csv_files
 *.zip
 .vscode
 

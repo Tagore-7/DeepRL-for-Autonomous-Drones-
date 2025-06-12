@@ -13,8 +13,9 @@ import glob
 from gymnasium.wrappers import FlattenObservation
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
-from deepRL_for_autonomous_drones.envs.Drone_Controller_RPM import DroneControllerRPM
+from envs.Drone_Controller_RPM import DroneControllerRPM
 import matplotlib.pyplot as plt 
+import seaborn as sns
 
 COST_KEYS = {
     "total": "cost",
@@ -45,7 +46,7 @@ def find_latest_checkpoint(root_dir, algo, task):
 
 
 def rollout_with_cost(model, env, n_episodes: int):
-    env.render()
+    # env.render()
     stats = {k: [] for k in ["reward", *COST_KEYS]}
     lens = []
     
@@ -72,6 +73,7 @@ def rollout_with_cost(model, env, n_episodes: int):
             stats[k].append(totals[k])
 
         lens.append(ep_len)
+    # env.close()
 
     result = {}
     for k, vals in stats.items():
@@ -87,23 +89,42 @@ def main():
     parser.add_argument("--root", default="sb3_runs_nonconstrained")
     parser.add_argument("--episodes", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+           "--graphics",
+            action=argparse.BooleanOptionalAction,
+           default=True,
+            help="Show PyBullet GUI (default: True). Use --no-graphics to disable.",
+       )    
+    parser.add_argument(
+            "--render_mode",
+            choices=["human", "rgb_array", "none"],
+            default="human",
+            help="Render‑mode to give gym.make(); 'none' → Python None",
+        )    
     args = parser.parse_args()
 
     wind_levels = np.linspace(0.0, 1.0, num=11)
     all_results = []
 
     # ckpt = find_latest_checkpoint(args.root, "PPO", args.task)
-    ckpt = "/home/trkosire/Tims_RL_Project/DeepRL-for-Autonomous-Drones-/deepRL_for_autonomous_drones/training/best_ppo_with_no_wind.zip"
+    ckpt = "deepRL_for_autonomous_drones/training/best_ppo_with_no_wind.zip"
 
     if ckpt is None:
         print("No checkpoint for PPO")
         return
+    
+    render_mode = None if args.render_mode.lower() == "none" else args.render_mode
 
+    env = make_env(args.task, seed=args.seed, wind_scale=0.0, graphics=args.graphics, render_mode=render_mode)
+
+    model = PPO.load(ckpt, device="cpu") 
+
+    if args.graphics and render_mode == "human":
+        env.render()
 
     for wind in wind_levels:
         print(f"Evaluating PPO with wind level {wind:.1f}")
-        env = make_env(args.task, seed=args.seed, wind_scale=wind, graphics=True, render_mode="human")
-        model = PPO.load(ckpt, device="cpu")
+
 
         if hasattr(env.unwrapped, "setWindScale"):
             env.unwrapped.setWindScale(wind)
@@ -119,22 +140,45 @@ def main():
             f"(tilt {metrics['tilt_mean']:4.2f}, spin {metrics['spin_mean']:4.2f}, "
             f"lidar {metrics['lidar_mean']:4.2f})"
         )
-        env.close()
+    env.close()
 
     df = pd.DataFrame(all_results)
     os.makedirs("evaluation", exist_ok=True)
-    out_path = os.path.join("evaluation/csv_files/", "ppo_wind_results.csv")
+    out_path = os.path.join("deepRL_for_autonomous_drones/evaluation/csv_files", "ppo_wind_results.csv")
     df.to_csv(out_path, index=False)
     print(f"\nSaved wind sweep evaluation to {out_path}")
 
-    fig, (ax_r, ax_c) = plt.subplots(2, 1, sharex=True)
-    df.plot(x="wind", y="reward_mean", yerr="reward_std", ax=ax_r, color="steelblue", label="Reward")
-    df.plot(x="wind", y="total_mean", yerr="total_std", ax=ax_c, color="firebrick", label="Cost")
-    ax_r.set_ylabel("Reward");ax_c.set_ylabel("Cost");ax_c.set_xlabel("Wind scale")
-    ax_r.set_title("PPO robustness vs wind")
+    sns.set_style("whitegrid")
+    fig, (ax_r, ax_c) = plt.subplots(2, 1, sharex=True, figsize=(6, 4))
+
+    ax_r.plot(df["wind"], df["reward_mean"],
+            lw=2, color="steelblue", label="Reward")
+    ax_r.fill_between(df["wind"],
+                    df["reward_mean"] - df["reward_std"],
+                    df["reward_mean"] + df["reward_std"],
+                    alpha=0.3, color="steelblue")
+    ax_r.set_ylabel("Reward")
+
+    ax_c.plot(df["wind"], df["total_mean"],
+            lw=2, color="firebrick", label="Cost")
+    ax_c.fill_between(df["wind"],
+                    df["total_mean"] - df["total_std"],
+                    df["total_mean"] + df["total_std"],
+                    alpha=0.3, color="firebrick")
+    ax_c.set_ylabel("Cost")
+    ax_c.set_xlabel("Wind Scale")
+
+    fig.suptitle("Drone‑Run", fontsize=12)
     fig.tight_layout()
-    fig.savefig("pics/ppo_wind_curve.png")
+    fig.subplots_adjust(top=0.9)      
+
+    out_img = "deepRL_for_autonomous_drones/pics/ppo_wind_curve.png"
+    fig.savefig(out_img, dpi=150)
+    print(f"Figure saved to {out_img}")
+    # plt.show()  
 
 
 if __name__ == "__main__":
     main()
+
+

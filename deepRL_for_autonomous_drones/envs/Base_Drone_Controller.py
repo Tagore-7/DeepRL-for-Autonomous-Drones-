@@ -200,60 +200,48 @@ class BaseDroneController(gym.Env):
         self.logger.addHandler(fh)
 
         self.logger.propagate = False  # prevents double logging
-
-    # def _setup_client_and_physics(self, graphics=False) -> bullet_client.BulletClient:
-    #     with RedirectStream(sys.stdout):
-    #         if graphics or self.use_graphics or self.render_mode == "human" or self.args.visual_mode.upper() == "GUI":
-    #             bc = bullet_client.BulletClient(connection_mode=p.GUI)
-    #             bc.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
-    #             bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
-    #         else:
-    #             bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
-    #             bc.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
-    #             bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
-    #     try:
-    #         if os.environ["PYBULLET_EGL"]:
-    #             con_mode = bc.getConnectionInfo()["connectionMethod"]
-    #             if con_mode == bc.DIRECT:
-    #                 egl = pkgutil.get_loader("eglRenderer")
-    #                 if egl:
-    #                     bc.loadPlugin(egl.get_filename(), "_eglRendererPlugin")
-    #                     print("LOADED EGL...")
-    #                 else:
-    #                     bc.loadPlugin("eglRendererPlugin")
-    #     except KeyError:
-    #         # print("Note: could not load egl...")
-    #         pass
-
-    #     bc.setAdditionalSearchPath(pybullet_data.getDataPath())
-    #     # disable GUI debug visuals
-    #     # bc.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
-    #     # bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
-
-    #     return bc
-
-    def _setup_client_and_physics(self, graphics=False):
-        with RedirectStream(sys.stdout):
-            try:
-                existing_connections = p.getConnectionInfo()
-                if existing_connections and existing_connections["isConnected"] and existing_connections["connectionMethod"] == p.GUI:
-                    print("Existing GUI connection detected. Using DIRECT to avoid conflict.")
-                    bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
-                else:
-                    connection_mode = (
-                        p.GUI
-                        if (graphics or self.use_graphics or self.render_mode == "human" or self.args.visual_mode.upper() == "GUI")
-                        else p.DIRECT
-                    )
-                    bc = bullet_client.BulletClient(connection_mode=connection_mode)
-                    bc.configureDebugVisualizer(p.COV_ENABLE_GUI, int(connection_mode == p.GUI))
-                    bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, int(connection_mode == p.GUI))
-            except Exception as e:
-                print(f"Error while setting up PyBullet client: {e}")
+    
+    def _setup_client_and_physics(self):
+        try:
+            if self.use_graphics:
+                bc = bullet_client.BulletClient(connection_mode=p.GUI)
+                bc.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
+                bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
+            else:
                 bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
-
+        except Exception as e:
+            print(f"Error creating client: {e}, falling back to DIRECT")
+            bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
+        
+        # Verify connection
+        if bc._client < 0:
+            raise RuntimeError("Failed to connect to physics server")
+        
         bc.setAdditionalSearchPath(pybullet_data.getDataPath())
         return bc
+
+    # def _setup_client_and_physics(self, graphics=False):
+    #     with RedirectStream(sys.stdout):
+    #         try:
+    #             existing_connections = p.getConnectionInfo()
+    #             if existing_connections and existing_connections["isConnected"] and existing_connections["connectionMethod"] == p.GUI:
+    #                 print("Existing GUI connection detected. Using DIRECT to avoid conflict.")
+    #                 bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
+    #             else:
+    #                 connection_mode = (
+    #                     p.GUI
+    #                     if (graphics or self.use_graphics or self.render_mode == "human" or self.args.visual_mode.upper() == "GUI")
+    #                     else p.DIRECT
+    #                 )
+    #                 bc = bullet_client.BulletClient(connection_mode=connection_mode)
+    #                 bc.configureDebugVisualizer(p.COV_ENABLE_GUI, int(connection_mode == p.GUI))
+    #                 bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, int(connection_mode == p.GUI))
+    #         except Exception as e:
+    #             print(f"Error while setting up PyBullet client: {e}")
+    #             bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
+
+    #     bc.setAdditionalSearchPath(pybullet_data.getDataPath())
+    #     return bc
 
     def _actionSpace(self):
         """Implement in Subclasses"""
@@ -387,7 +375,8 @@ class BaseDroneController(gym.Env):
             self.episode_wind_active = self.wind_force_scale > 0.0
             if self.episode_wind_active:
                 print("Episode wind active")
-                f_magnitude = self.rng.uniform(0, 0.005)
+                f_magnitude = self.rng.uniform(0, 0.005) #old  wind 
+                # f_magnitude = self.rng.uniform(0.0, 1) #new  wind 
                 f_direction = self.rng.uniform(-1, 1, 3)
                 f_direction[2] = 0
                 f_direction /= np.linalg.norm(f_direction[:2])

@@ -19,7 +19,7 @@ def firstRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, 
         action[3],
     )  # Actions from the agent
 
-    rel_pos = np.array([px, py, pz]) - env.target_pos
+    rel_pos = np.array([px, py, pz]) - env.target_posCost"
     rel_vel = np.array([vx, vy, vz]) - np.array([0, 0, 0])
     distance_penalty = np.linalg.norm(rel_pos)  # Distance penalty
     velocity_penalty = np.linalg.norm(rel_vel)  # Velocity penalty

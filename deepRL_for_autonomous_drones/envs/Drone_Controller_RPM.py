@@ -216,11 +216,14 @@ class DroneControllerRPM(BaseDroneController):
         # if self.PYB_STEPS_PER_CTRL > 1 and self.enable_ground_effect:
         #     self.drone.updateAndStoreKinematicInformation()
         force_is_on = self.enable_wind and self._wind_effect_active and self.episode_wind_active
-        gust_active = self.rng.uniform() < 0.3
+        gust_active = self.rng.uniform() < 0.3 #old 
+        # gust_active = self.rng.uniform() < 0.7 # new
 
         for _ in range(self.PYB_STEPS_PER_CTRL):
             if force_is_on and gust_active:
                 self._dragWind()
+
+                # print(f"[GUST] |F|={np.linalg.norm(self.wind_force):.4f} N vec={self.wind_force}") #printing wind force
 
             self.drone.physics(clipped_action)
 
@@ -271,6 +274,7 @@ class DroneControllerRPM(BaseDroneController):
             "tilt_cost": tilt_cost,
             "spin_cost": spin_cost,
             "lidar_cost": lidar_cost,
+            # "wind_force_N" : float(np.linalg.norm(self.wind_force)
         }
 
         reward = self._computeReward(observation, action, self.reward_function, tilt_cost, spin_cost, lidar_cost)
@@ -324,6 +328,7 @@ class DroneControllerRPM(BaseDroneController):
         cost += tilt_cost + spin_cost
 
         # cost /= self.CTRL_STEPS
+        
 
         # TODO: Change this so lidar_cost isn't always being returned, ie when no obstacles
         return float(cost), float(tilt_cost), float(spin_cost), float(lidar_cost)
@@ -361,7 +366,8 @@ class DroneControllerRPM(BaseDroneController):
                 self._p.disconnect()
                 self.use_graphics = True
                 # self._p = self._setup_client_and_physics(graphics=True)
-                self._p = p.connect(p.GUI)
+                # self._p = p.connect(p.GUI)
+                self._p = bullet_client.BulletClient(connection_mode=p.GUI)
                 self.drone.set_bullet_client(self._p)
                 self._resetEnvironment()
                 # self.drone.set_bullet_client(self._p)
