@@ -108,9 +108,9 @@ class BaseDroneController(gym.Env):
         self.WIND_LEVELS = {
             "none": 0.0,
             "light_breeze": 2.24,  # 5 mph
-            "light": 4.47,  # 10 mph
-            "medium": 8.94,  # 20 mph
-            "high": 17.88,  # 40 mph
+            "light_wind": 4.47,  # 10 mph
+            "medium_wind": 8.94,  # 20 mph
+            "high_wind": 17.88,  # 40 mph
         }
 
         # ---- Constants ----#
@@ -130,6 +130,7 @@ class BaseDroneController(gym.Env):
         self.PYB_TIMESTEP = 1.0 / self.PYB_FREQ
         self.EPISODE_LEN_SEC = 15
         self.CTRL_STEPS = self.EPISODE_LEN_SEC * self.CTRL_FREQ
+        self.WIND_DELAY_STEPS = 20
 
         # ---- LIDAR settings ----#
         # self.LIDAR_NUM_RAYS = 36  # Number of LIDAR rays

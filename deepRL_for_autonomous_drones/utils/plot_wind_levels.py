@@ -8,7 +8,7 @@ import rliable.metrics as metrics
 # ---- x-axis: "speed" m/s   |   "scale" normalised 0–1 ----#
 x_axis_mode = "speed"  # "speed"   or   "scale"
 
-df = pd.read_csv("../evaluation/evaluations/wind_results.csv")
+df = pd.read_csv("deepRL_for_autonomous_drones/evaluation/evaluations/wind_results.csv")
 
 speed_map = {"none": 0.0, "light": 4.47, "medium": 8.94, "high": 17.88}
 df["wind_speed"] = df["wind_level"].map(speed_map)

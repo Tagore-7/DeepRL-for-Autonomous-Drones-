@@ -6,6 +6,7 @@ def computeSimpleCost(env, observation):
     info = {}
     lidar_cost = 0.0
     collision_cost = 0.0
+    crash_cost = 0.0
     cost = 0.0
 
     if env.observation_type in [2, 4]:
@@ -34,7 +35,16 @@ def computeSimpleCost(env, observation):
             collision_cost = 5.0
             env.crashed = True
 
-    cost = lidar_cost + collision_cost
+    # adding crash cost ### 
+    plane_id = getattr(env, "PLANE_ID", 0)
+    if env.getBulletClient().getContactPoints(env.drone.getDroneID(), plane_id):
+        env.crashed = True
+
+    if getattr(env, "crashed", False):
+        crash_cost = 5.0
+ 
+    cost = lidar_cost + collision_cost + crash_cost
+
     info["cost"] = cost
     return info
 

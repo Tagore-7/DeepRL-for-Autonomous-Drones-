@@ -4,6 +4,7 @@ import numpy as np
 import pybullet as p
 from deepRL_for_autonomous_drones.envs.Base_Drone_Controller import BaseDroneController
 from deepRL_for_autonomous_drones.envs.env_cfg import EnvCfg
+from collections import OrderedDict
 
 # import pybullet_data
 # import math
@@ -209,7 +210,13 @@ class DroneControllerRPM(BaseDroneController):
         """Advances the environment by one simulation step."""
         # if self.PYB_STEPS_PER_CTRL > 1 and self.enable_ground_effect:
         #     self.drone.updateAndStoreKinematicInformation()
-        force_is_on = self.enable_wind and self._wind_effect_active and self.episode_wind_active
+        # force_is_on = self.enable_wind and self._wind_effect_active and self.episode_wind_active
+        force_is_on = (
+            self.enable_wind
+            and self._wind_effect_active
+            and self.episode_wind_active
+            and self.ctrl_step_counter >= self.WIND_DELAY_STEPS
+        )
         gust_active = self.rng.uniform() < 0.3
 
         for _ in range(self.PYB_STEPS_PER_CTRL):

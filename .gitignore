@@ -11,7 +11,8 @@ sb3_runs_nonconstrained
 tensorboard
 *.zip
 .vscode
-
+results
+pics
 # Byte-compiled / optimized / DLL files
 __pycache__/
 

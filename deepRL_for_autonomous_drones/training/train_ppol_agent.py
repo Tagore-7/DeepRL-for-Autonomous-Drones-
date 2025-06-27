@@ -107,14 +107,9 @@ def train(args: TrainCfg = TrainCfg):
     if worker is None:
         raise ValueError(f"Unknown worker type: {args.worker}")
 
-    # train_envs = worker([lambda: make_env(args.task) for _ in range(training_num)])
-    # test_envs = worker([lambda: make_env(args.task) for _ in range(args.testing_num)])
 
     train_envs = worker([lambda: make_training_env(args.task) for _ in range(training_num)])
     test_envs = worker([lambda: make_training_env(args.task) for _ in range(args.testing_num)])
-
-    # train_envs = worker([lambda: make_training_env(args.task, args.seed) for _ in range(training_num)])
-    # test_envs = worker([lambda: make_training_env(args.task, args.seed) for _ in range(args.testing_num)])
 
     agent.learn(
         train_envs=train_envs,
@@ -134,7 +129,6 @@ def train(args: TrainCfg = TrainCfg):
     )
 
     if __name__ == "__main__":
-        # env = make_training_env(args.task, args.seed)
         env = make_env(args.task, graphics=args.render)
 
         agent.policy.eval()

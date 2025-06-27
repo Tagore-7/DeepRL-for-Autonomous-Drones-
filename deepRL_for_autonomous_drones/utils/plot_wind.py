@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from rliable.library import get_interval_estimates
 import rliable.metrics as metrics
 
-df = pd.read_csv("../evaluation/evaluations/wind_results.csv")
+df = pd.read_csv("deepRL_for_autonomous_drones/evaluation/evaluations/wind_results.csv")
 
 # ---- Wind levels = tasks ----#
 wind_levels = df["wind"].unique()
