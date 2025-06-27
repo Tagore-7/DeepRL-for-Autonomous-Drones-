@@ -1,6 +1,8 @@
-import numpy as np
 import xml.etree.ElementTree as ET
-import pkg_resources
+
+# import pkg_resources
+from importlib.resources import files
+import numpy as np
 
 
 # ---- Parser for CF2X.URDF file ---- #
@@ -8,7 +10,7 @@ def parseURDFParameters(urdf_path):
     """Loads parameters from a URDF file."""
 
     URDF_TREE = ET.parse(
-        pkg_resources.resource_filename("deepRL_for_autonomous_drones", urdf_path)
+        str(files("deepRL_for_autonomous_drones") / urdf_path),
     ).getroot()
 
     M = float(URDF_TREE[1][0][1].attrib["value"])
@@ -23,9 +25,7 @@ def parseURDFParameters(urdf_path):
     KM = float(URDF_TREE[0].attrib["km"])
     COLLISION_H = float(URDF_TREE[1][2][1][0].attrib["length"])
     COLLISION_R = float(URDF_TREE[1][2][1][0].attrib["radius"])
-    COLLISION_SHAPE_OFFSETS = [
-        float(s) for s in URDF_TREE[1][2][0].attrib["xyz"].split(" ")
-    ]
+    COLLISION_SHAPE_OFFSETS = [float(s) for s in URDF_TREE[1][2][0].attrib["xyz"].split(" ")]
     COLLISION_Z_OFFSET = COLLISION_SHAPE_OFFSETS[2]
     MAX_SPEED_KMH = float(URDF_TREE[0].attrib["max_speed_kmh"])
     GND_EFF_COEFF = float(URDF_TREE[0].attrib["gnd_eff_coeff"])

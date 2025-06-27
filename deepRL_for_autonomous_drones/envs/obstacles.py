@@ -1,5 +1,9 @@
+import random
+from importlib.resources import files
 import pybullet as p
-import pkg_resources
+
+# import pkg_resources
+import numpy as np
 
 
 def getFixedTreePositions():
@@ -87,14 +91,13 @@ def getFixedTreePositions():
     return fixed_tree_positions
 
 
-def generateStaticTrees(fixed_tree_positions, fixed_tree_types):
+def generateStaticTrees(fixed_tree_positions, fixed_tree_types, pyb_client):
     trees = []
     for pos, tree_type in zip(fixed_tree_positions, fixed_tree_types):
         trees.append(
-            p.loadURDF(
-                pkg_resources.resource_filename(
-                    "deepRL_for_autonomous_drones", tree_type
-                ),
+            pyb_client.loadURDF(
+                # pkg_resources.resource_filename("deepRL_for_autonomous_drones", tree_type),
+                str(files("deepRL_for_autonomous_drones") / tree_type),
                 basePosition=pos,
                 useFixedBase=True,
             )
@@ -107,36 +110,32 @@ def loadStaticBlocks():
     static_blocks = []
     static_blocks.append(
         p.loadURDF(
-            pkg_resources.resource_filename(
-                "deepRL_for_autonomous_drones", "assets/static_blocks.urdf"
-            ),
+            # pkg_resources.resource_filename("deepRL_for_autonomous_drones", "assets/static_blocks.urdf"),
+            str(files("deepRL_for_autonomous_drones") / "assets/static_blocks.urdf"),
             basePosition=[3, 3, 3],
             useFixedBase=True,
         )
     )
     static_blocks.append(
         p.loadURDF(
-            pkg_resources.resource_filename(
-                "deepRL_for_autonomous_drones", "assets/static_blocks.urdf"
-            ),
+            # pkg_resources.resource_filename("deepRL_for_autonomous_drones", "assets/static_blocks.urdf"),
+            str(files("deepRL_for_autonomous_drones") / "assets/static_blocks.urdf"),
             basePosition=[3, -3, 3],
             useFixedBase=True,
         )
     )
     static_blocks.append(
         p.loadURDF(
-            pkg_resources.resource_filename(
-                "deepRL_for_autonomous_drones", "assets/static_blocks.urdf"
-            ),
+            # pkg_resources.resource_filename("deepRL_for_autonomous_drones", "assets/static_blocks.urdf"),
+            str(files("deepRL_for_autonomous_drones") / "assets/static_blocks.urdf"),
             basePosition=[-3, 3, 3],
             useFixedBase=True,
         )
     )
     static_blocks.append(
         p.loadURDF(
-            pkg_resources.resource_filename(
-                "deepRL_for_autonomous_drones", "assets/static_blocks.urdf"
-            ),
+            # pkg_resources.resource_filename("deepRL_for_autonomous_drones", "assets/static_blocks.urdf"),
+            str(files("deepRL_for_autonomous_drones") / "assets/static_blocks.urdf"),
             basePosition=[-3, -3, 3],
             useFixedBase=True,
         )
@@ -147,16 +146,14 @@ def loadStaticBlocks():
 
 def loadMovingBlocks():
     first_moving_block = p.loadURDF(
-        pkg_resources.resource_filename(
-            "deepRL_for_autonomous_drones", "assets/moving_blocks.urdf"
-        ),
+        # pkg_resources.resource_filename("deepRL_for_autonomous_drones", "assets/moving_blocks.urdf"),
+        str(files("deepRL_for_autonomous_drones") / "assets/moving_blocks.urdf"),
         basePosition=[0, 0, 1],
         useFixedBase=True,
     )
     second_moving_block = p.loadURDF(
-        pkg_resources.resource_filename(
-            "deepRL_for_autonomous_drones", "assets/moving_blocks.urdf"
-        ),
+        # pkg_resources.resource_filename("deepRL_for_autonomous_drones", "assets/moving_blocks.urdf"),
+        str(files("deepRL_for_autonomous_drones") / "assets/moving_blocks.urdf"),
         basePosition=[0, 0, 1],
         useFixedBase=True,
     )
@@ -168,16 +165,14 @@ def loadTorusObstacles():
     toruses = []
     torus_collision = p.createCollisionShape(
         shapeType=p.GEOM_MESH,
-        fileName=pkg_resources.resource_filename(
-            "deepRL_for_autonomous_drones", "assets/torus.obj"
-        ),
+        # fileName=pkg_resources.resource_filename("deepRL_for_autonomous_drones", "assets/torus.obj"),
+        fileName=str(files("deepRL_for_autonomous_drones") / "assets/torus.obj"),
         flags=p.GEOM_FORCE_CONCAVE_TRIMESH,
     )
     torus_visual = p.createVisualShape(
         shapeType=p.GEOM_MESH,
-        fileName=pkg_resources.resource_filename(
-            "deepRL_for_autonomous_drones", "assets/torus.obj"
-        ),
+        # fileName=pkg_resources.resource_filename("deepRL_for_autonomous_drones", "assets/torus.obj"),
+        fileName=str(files("deepRL_for_autonomous_drones") / "assets/torus.obj"),
         rgbaColor=[1, 0, 0, 1],
     )
     torus_id_one = p.createMultiBody(

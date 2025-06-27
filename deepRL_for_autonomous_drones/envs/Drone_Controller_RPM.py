@@ -3,6 +3,8 @@ from gymnasium.spaces import Box, Dict
 import numpy as np
 import pybullet as p
 from deepRL_for_autonomous_drones.envs.Base_Drone_Controller import BaseDroneController
+from deepRL_for_autonomous_drones.envs.env_cfg import EnvCfg
+from collections import OrderedDict
 
 # import pybullet_data
 # import math
@@ -10,22 +12,15 @@ from deepRL_for_autonomous_drones.envs.Base_Drone_Controller import BaseDroneCon
 
 
 class DroneControllerRPM(BaseDroneController):
-    def __init__(self, args):
-        super(DroneControllerRPM, self).__init__(args=args)
+    def __init__(self, render_mode=None, graphics=False):
+        super().__init__(render_mode=render_mode, graphics=graphics)
         self.reward_function = self.args.reward_function
+        self.cost_function = self.args.cost_function
 
     def _actionSpace(self):
         """Sets the action space of the environment."""
-        act_lower_bound = (
-            self.drone.KF
-            * 1
-            * (self.drone.PWM2RPM_SCALE * self.drone.MIN_PWM + self.drone.PWM2RPM_CONST) ** 2
-        )
-        act_upper_bound = (
-            self.drone.KF
-            * 1
-            * (self.drone.PWM2RPM_SCALE * self.drone.MAX_PWM + self.drone.PWM2RPM_CONST) ** 2
-        )
+        act_lower_bound = self.drone.KF * 1 * (self.drone.PWM2RPM_SCALE * self.drone.MIN_PWM + self.drone.PWM2RPM_CONST) ** 2
+        act_upper_bound = self.drone.KF * 1 * (self.drone.PWM2RPM_SCALE * self.drone.MAX_PWM + self.drone.PWM2RPM_CONST) ** 2
         self.physical_action_bounds = (
             np.full(4, act_lower_bound, np.float32),
             np.full(4, act_upper_bound, np.float32),
@@ -118,6 +113,14 @@ class DroneControllerRPM(BaseDroneController):
 
         return self.observation_space
 
+    def setWindScale(self, scale: float):
+        self.wind_force_scale = np.clip(scale, 0.0, 1.0)
+
+        # ---- re-apply scale to current magnitude/direction ----#
+        f_dir = self.wind_force / np.linalg.norm(self.wind_force + 1e-8)
+        f_mag = np.linalg.norm(self.wind_force)
+        self.wind_force = self.wind_force_scale * f_mag * f_dir
+
     def _dragWind(self):
         """Simulates the effect of wind on the drone."""
         # _, orientation = p.getBasePositionAndOrientation(self.drone)
@@ -125,17 +128,24 @@ class DroneControllerRPM(BaseDroneController):
         # base_rot = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
         # relative_velocity = np.array(linear_vel) - self.wind_force
 
-        state = self.drone.getDroneStateVector()
-        base_rot = np.array(p.getMatrixFromQuaternion(state[3:7])).reshape(3, 3)
-        relative_velocity = np.array(state[10:13]) - self.wind_force
+        # state = self.drone.getDroneStateVector()
+        # base_rot = np.array(self._p.getMatrixFromQuaternion(state[3:7])).reshape(3, 3)
+        # relative_velocity = np.array(state[10:13]) - self.wind_force
+        # drag = np.dot(base_rot.T, self.drone.DRAG_COEFF * np.array(relative_velocity))
+        # self._p.applyExternalForce(
+        #     self.drone.getDroneID(),
+        #     4,
+        #     forceObj=drag,
+        #     posObj=[0, 0, 0],
+        #     flags=self._p.LINK_FRAME,
+        # )
 
-        drag = np.dot(base_rot.T, self.drone.DRAG_COEFF * np.array(relative_velocity))
-        p.applyExternalForce(
+        self._p.applyExternalForce(
             self.drone.getDroneID(),
-            4,
-            forceObj=drag,
+            -1,
+            forceObj=self.wind_force,
             posObj=[0, 0, 0],
-            flags=p.LINK_FRAME,
+            flags=self._p.LINK_FRAME,
         )
 
     def _groundEffect(self, rpm):
@@ -147,7 +157,7 @@ class DroneControllerRPM(BaseDroneController):
         """
 
         # ---- Kin. info of all links (propellers and center of mass) ----#
-        link_states = p.getLinkStates(
+        link_states = self._p.getLinkStates(
             self.drone.getDroneID(),
             linkIndices=[0, 1, 2, 3, 4],
             computeLinkVelocity=1,
@@ -164,20 +174,15 @@ class DroneControllerRPM(BaseDroneController):
             ]
         )
         prop_heights = np.clip(prop_heights, self.drone.GND_EFF_H_CLIP, np.inf)
-        gnd_effects = (
-            np.array(rpm**2)
-            * self.drone.KF
-            * self.drone.GND_EFF_COEFF
-            * (self.drone.PROP_RADIUS / (4 * prop_heights)) ** 2
-        )
+        gnd_effects = np.array(rpm**2) * self.drone.KF * self.drone.GND_EFF_COEFF * (self.drone.PROP_RADIUS / (4 * prop_heights)) ** 2
         if np.abs(self.drone.rpy[0]) < np.pi / 2 and np.abs(self.drone.rpy[1]) < np.pi / 2:
             for i in range(4):
-                p.applyExternalForce(
+                self._p.applyExternalForce(
                     self.drone.getDroneID(),
                     i,
                     forceObj=[0, 0, gnd_effects[i]],
                     posObj=[0, 0, 0],
-                    flags=p.LINK_FRAME,
+                    flags=self._p.LINK_FRAME,
                 )
 
     def beforeStep(self, action):
@@ -186,9 +191,7 @@ class DroneControllerRPM(BaseDroneController):
         # Save the raw input action.
         action = np.atleast_1d(np.squeeze(action))
         if action.ndim != 1:
-            raise ValueError(
-                "[ERROR]: The action returned by the controller must be 1 dimensional."
-            )
+            raise ValueError("[ERROR]: The action returned by the controller must be 1 dimensional.")
         self.current_raw_action = action
         processed_action = self.drone.preprocessAction(action)
         return processed_action
@@ -205,31 +208,40 @@ class DroneControllerRPM(BaseDroneController):
 
     def _simulatePhysics(self, clipped_action):
         """Advances the environment by one simulation step."""
-        if self.PYB_STEPS_PER_CTRL > 1 and self.enable_ground_effect:
-            self.drone.updateAndStoreKinematicInformation()
-        for _ in range(self.PYB_STEPS_PER_CTRL):
-            self.drone.physics(p, clipped_action)
+        # if self.PYB_STEPS_PER_CTRL > 1 and self.enable_ground_effect:
+        #     self.drone.updateAndStoreKinematicInformation()
+        # force_is_on = self.enable_wind and self._wind_effect_active and self.episode_wind_active
+        force_is_on = (
+            self.enable_wind
+            and self._wind_effect_active
+            and self.episode_wind_active
+            and self.ctrl_step_counter >= self.WIND_DELAY_STEPS
+        )
+        gust_active = self.rng.uniform() < 0.3
 
-            position, _ = p.getBasePositionAndOrientation(self.drone.getDroneID())
-            p.resetDebugVisualizerCamera(
-                cameraDistance=1,
+        for _ in range(self.PYB_STEPS_PER_CTRL):
+            if force_is_on and gust_active:
+                # self._dragWind() # Old dragWind
+                self._applyWindDrag()
+
+            self.drone.physics(clipped_action)
+
+            position, _ = self._p.getBasePositionAndOrientation(self.drone.getDroneID())
+            self._p.resetDebugVisualizerCamera(
+                cameraDistance=0.5,
                 cameraYaw=0,
                 cameraPitch=-45,
                 cameraTargetPosition=position,
             )
-            p.stepSimulation()
 
-            if self.enable_ground_effect:
-                self._groundEffect(clipped_action)
+            self._p.stepSimulation()
 
-            if self.enable_wind and self._wind_effect_active:
-                p_s = self.rng.uniform(0, 1)  # Probability for wind at each step
-                if p_s < 0.3:
-                    self._dragWind()
+            # if self.enable_ground_effect:
+            #     self._groundEffect(clipped_action)
 
             self.drone.last_clipped_action = clipped_action
 
-            if self.visual_mode.upper() == "GUI":
+            if self.use_graphics or self.render_mode == "human" or self.visual_mode.upper() == "GUI":
                 time.sleep(self.time_step)
 
     def step(self, action):
@@ -247,12 +259,30 @@ class DroneControllerRPM(BaseDroneController):
         self.drone.updateAndStoreKinematicInformation()
 
         observation = self._getObservation()
+        # cost, tilt_cost, spin_cost, lidar_cost = self._calculateCost(observation)
+        # info = {
+        #     "cost": cost,
+        #     "tilt_cost": tilt_cost,
+        #     "spin_cost": spin_cost,
+        #     "lidar_cost": lidar_cost,
+        # }
+
+        # reward = self._computeReward(observation, action, self.reward_function, tilt_cost, spin_cost, lidar_cost)
+
+        # cost = self._calculateCost(observation)
+        # info = {
+        #     "cost": cost,
+        # }
+        # info = compute_cost(self, observation)
+
+        info = self._computeCost(observation, self.cost_function)
         reward = self._computeReward(observation, action, self.reward_function)
+
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
         truncated = self.afterStep(truncated)
 
-        return observation, reward, terminated, truncated, {}
+        return observation, reward, terminated, truncated, info
 
     def _computeTerminated(self):
         """Determines if the environment is terminated or not."""
@@ -267,11 +297,8 @@ class DroneControllerRPM(BaseDroneController):
 
         if (
             self.crashed
-            or p.getContactPoints(self.drone.getDroneID(), self.plane)
-            or (
-                self.add_obstacles
-                and any(p.getContactPoints(self.drone.getDroneID(), tree) for tree in self.trees)
-            )
+            or self._p.getContactPoints(self.drone.getDroneID(), self.plane)
+            or (self.add_obstacles and any(self._p.getContactPoints(self.drone.getDroneID(), tree) for tree in self.trees))
             or (
                 state[2] <= 0
                 or abs(state[0]) > self.boundary_limits
@@ -284,5 +311,17 @@ class DroneControllerRPM(BaseDroneController):
 
         return False
 
-    def render(self):
-        return
+    def render(self, mode="human"):
+        if mode == "human":
+            if not self.use_graphics:
+                self._p.disconnect()
+                self.use_graphics = True
+                # self._p = self._setup_client_and_physics(graphics=True)
+                self._p = p.connect(p.GUI)
+                self.drone.set_bullet_client(self._p)
+                self._resetEnvironment()
+                # self.drone.set_bullet_client(self._p)
+        # if mode != "rgb_array":
+        #     return np.array([])
+        else:
+            return None

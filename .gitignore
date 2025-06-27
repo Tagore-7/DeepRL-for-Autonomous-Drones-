@@ -1,8 +1,18 @@
 *Zone.Identifier
 logs_metrics_benchmark_tensorboard
+env_logs
+logs
+wandb
+benchmark_results
+sb3_runs_nonconstrained
+*/evaluation/evaluation/
+*/evaluation/evaluations/
+*/training/optuna/
+tensorboard
 *.zip
 .vscode
-
+results
+pics
 # Byte-compiled / optimized / DLL files
 __pycache__/
 
