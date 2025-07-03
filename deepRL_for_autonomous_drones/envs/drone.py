@@ -6,7 +6,9 @@ from collections import deque
 from importlib.resources import files
 import numpy as np
 import pybullet as p
+import random
 from deepRL_for_autonomous_drones.utils.drone_urdf_parser import parseURDFParameters
+from deepRL_for_autonomous_drones.config.robust_settings_cfg import RobustCfg
 
 
 class Drone(object):
@@ -20,6 +22,17 @@ class Drone(object):
         # pyb_client=p,
         normalized_rl_action_space=True,
     ):
+
+        self.args = RobustCfg
+
+        self.delay_buf: deque[np.ndarray] = deque(maxlen=self.args.delay_steps or 1)
+        self._fail_idx: int | None = None  # which rotor (0–3) will fail
+        self._fail_remaining: int = 0  # how many more control steps to keep it disabled
+        self._fail_timer: int = 0  # countdown before failure starts
+        self._flip_set: set[int] = set()  # which rotors are inverted
+        self._base_yaw_dir = np.array([-1, 1, -1, 1], dtype=float)
+        self._yaw_dir = self._base_yaw_dir.copy()
+
         self._p = bullet_client
         self.rng = rng
         self.launch_pad_position = launch_pad_position
@@ -93,6 +106,7 @@ class Drone(object):
         # ---- about what was recently commanded, enabling it to ----#
         # ---- learn better stabilization and complex actions    ----#
         self.action_buffer = deque(maxlen=self.ACTION_BUFFER_SIZE)
+        self.last_action_err = 0.0
         self.pos = np.zeros(3)
         self.quat = np.zeros(4)
         self.rpy = np.zeros(3)
@@ -110,11 +124,70 @@ class Drone(object):
         self.resetDrone()
         self.loadDrone()
 
+    def armRotorFailure(self, idx: int, steps: int, delay_sec: float, ctrl_freq: int):
+        """
+        Schedule a rotor failure:
+            idx       - rotor index 0..3 that will be zero-thrust
+            steps     - how many control steps to keep it disabled
+            delay_sec - how many seconds after reset before it starts
+            ctrl_freq - controller frequency (e.g. 30, 60) to convert seconds→steps
+        Called once at the beginning of every episode.
+        """
+        self._fail_idx = idx
+        self._fail_remaining = 0  # nothing yet
+        self._fail_timer = int(delay_sec * ctrl_freq)
+        self._fail_steps_cfg = steps  # remember for when timer hits 0
+
+    def resetRotorFailure(self):
+        self._fail_remaining = 0
+        self._fail_idx = None
+        self._fail_timer = 0
+
+    def setSignFlips(self, idxs: set[int]):
+        self._yaw_dir = self._base_yaw_dir.copy()
+        for i in idxs:
+            self._yaw_dir[i] *= -1  # flip spin direction
+        self._flip_set = idxs.copy()
+
+    def applyActionDisruptor(self, thrust):
+
+        if not self.args.enabled:
+            return thrust
+
+        if self.args.delay_steps > 0:
+            if len(self.delay_buf) < self.args.delay_steps:
+                self.delay_buf.append(thrust.copy())
+                delayed = thrust  # no old cmd yet
+            else:
+                delayed = self.delay_buf.popleft()  # oldest cmd
+                self.delay_buf.append(thrust.copy())
+            thrust = delayed
+
+        if self._fail_timer > 0:
+            # Failure not active yet
+            self._fail_timer -= 1
+        elif self._fail_remaining == 0 and self._fail_idx is not None:
+            # Time elapse, start failure window
+            self._fail_remaining = self._fail_steps_cfg
+
+        if self._fail_remaining > 0 and self._fail_idx is not None:
+            thrust = thrust.copy()
+            thrust[self._fail_idx] = 0.0
+            self._fail_remaining -= 1
+
+        t = thrust.copy()
+        if self.args.noise_sigma > 0:
+            mode = self.args.noise_type
+            mu = self.args.noise_mu
+            sigma = self.args.noise_sigma * self.HOVER_THRUST
+
+            if mode == "gauss":
+                t += self.rng.normal(mu, sigma, size=t.shape)
+
+        return t
+
     def set_bullet_client(self, bullet_client):
         self._p = bullet_client
-
-    def set_seed(self, seed):
-        self.rng = np.random.default_rng(seed)
 
     def getDroneID(self):
         """Gets the drone's ID"""
@@ -177,28 +250,61 @@ class Drone(object):
 
     def preprocessAction(self, action):
         """Converts the action passed to .step() into motor RPMs"""
-        action = self.denormalizeAction(action)
-        self.action_buffer.append(action)
-        self.current_physical_action = action
+        # action = self.denormalizeAction(action)
 
-        if np.isnan(action).any():
-            print("[WARNING] NaN detected in action:", action)
+        # self.action_buffer.append(action)
+        # self.current_physical_action = action
 
-        thrust = np.clip(action, self.physical_action_bounds[0], self.physical_action_bounds[1])
-        self.current_clipped_action = thrust
+        # if np.isnan(action).any():
+        #     print("[WARNING] NaN detected in action:", action)
 
-        # convert to quad motor rpm commands
+        # thrust = np.clip(action, self.physical_action_bounds[0], self.physical_action_bounds[1])
+        # self.current_clipped_action = thrust
+
+        # # convert to quad motor rpm commands
+        # pwm = self.cmd2pwm(thrust)
+        # rpm = self.pwm2rpm(pwm)
+
+        # return rpm
+
+        # if self.args.enabled:
+        clean = self.denormalizeAction(action).astype(np.float32)
+        noisy = self.applyActionDisruptor(clean.copy())
+
+        self.last_action_err = float(np.abs(noisy - clean).mean())
+        self.action_buffer.append(clean)  # <- intended command
+        self.current_cmd = clean  # for logging/obs
+        self.current_physical_action = noisy  # what motors get
+
+        thrust = np.clip(noisy, *self.physical_action_bounds)
         pwm = self.cmd2pwm(thrust)
         rpm = self.pwm2rpm(pwm)
-
         return rpm
+        # else:
+        #     action = self.denormalizeAction(action)
+
+        #     self.action_buffer.append(action)
+        #     self.current_physical_action = action
+
+        #     if np.isnan(action).any():
+        #         print("[WARNING] NaN detected in action:", action)
+
+        #     thrust = np.clip(action, self.physical_action_bounds[0], self.physical_action_bounds[1])
+        #     self.current_clipped_action = thrust
+
+        #     # convert to quad motor rpm commands
+        #     pwm = self.cmd2pwm(thrust)
+        #     rpm = self.pwm2rpm(pwm)
+
+        #     return rpm
 
     def physics(self, rpm):
         """Base PyBullet physics implementation."""
         forces = np.array(rpm**2) * self.KF
         torques = np.array(rpm**2) * self.KM
 
-        z_torque = -torques[0] + torques[1] - torques[2] + torques[3]
+        # z_torque = -torques[0] + torques[1] - torques[2] + torques[3]
+        z_torque = np.sum(self._yaw_dir * torques)
 
         for i in range(4):
             self._p.applyExternalForce(
@@ -208,16 +314,6 @@ class Drone(object):
                 posObj=[0, 0, 0],
                 flags=self._p.LINK_FRAME,
             )
-
-        # This is for the rotor visuals
-        # for i in range(4):
-        #     self._p.setJointMotorControl2(
-        #         self.drone,
-        #         jointIndex=i,
-        #         controlMode=self._p.VELOCITY_CONTROL,
-        #         targetVelocity=rpm[i],
-        #         force=0.010,
-        #     )
 
         self._p.applyExternalTorque(
             self.drone,
@@ -265,7 +361,6 @@ class Drone(object):
         )
 
         self.drone = drone
-        # return drone
 
     def resetDrone(self):
         """(Re-)initializes the drone's kinematic information"""
@@ -320,27 +415,6 @@ class Drone(object):
         )
         return state.reshape(
             20,
-        )
-
-    def _dragWind(self):
-        """Simulates the effect of wind on the drone."""
-        # _, orientation = p.getBasePositionAndOrientation(self.drone)
-        # linear_vel, _ = p.getBaseVelocity(self.drone)
-        # base_rot = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
-        # relative_velocity = np.array(linear_vel) - self.wind_force
-
-        state = self.getDroneStateVector()
-        base_rot = np.array(self._p.getMatrixFromQuaternion(state[3:7])).reshape(3, 3)
-        # relative_velocity = np.array(state[10:13]) - self.wind_force
-        relative_velocity = np.array(state[10:13])
-
-        drag = np.dot(base_rot.T, self.DRAG_COEFF * np.array(relative_velocity))
-        self._p.applyExternalForce(
-            self.getDroneID(),
-            4,
-            forceObj=drag,
-            posObj=[0, 0, 0],
-            flags=self._p.LINK_FRAME,
         )
 
     def _groundEffect(self, rpm):

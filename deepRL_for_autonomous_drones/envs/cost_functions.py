@@ -2,10 +2,23 @@ import pybullet as p
 import numpy as np
 
 
+def _ramp(x, x0, x1):
+    """
+    Piece-wise linear ramp:
+        0            if x <= x0
+        (x-x0)/(x1-x0)  if x0 < x < x1
+        1            if x >= x1
+    """
+    return np.clip((x - x0) / (x1 - x0), 0.0, 1.0)
+
+
 def computeSimpleCost(env, observation):
     info = {}
     lidar_cost = 0.0
     collision_cost = 0.0
+    plane_cost = 0.0
+    tilt_cost = 0.0
+    spin_cost = 0.0
     cost = 0.0
 
     if env.observation_type in [2, 4]:
@@ -13,16 +26,6 @@ def computeSimpleCost(env, observation):
         lidar_obs_distances = observation["lidar"]
         min_distance = float(np.min(lidar_obs_distances) * env.LIDAR_MAX_DISTANCE)
 
-        # The CF2X crazyflie is roughly 0.056m in width <- not the value we want
-
-        # prop links positioned at + or - 0.028 in both x and y axes
-        # so diagonal motor-to-motor length is ~0.056m
-        # arm span (corner to corner) = sqrt(0.028^2 + 0.028^2) = 0.0396m ?
-        # multiply by 2 to get a rough full body diagonal (motor-to-motor)
-        # drone diagonal size roughly ~0.079m (0.0396 x 2)
-
-        # arm="0.0397", so arm length is ~4 cm → full size (motor-to-motor) is ~8 cm, or 0.08m
-        # testing threshold atm as drone size x 4, so 0.08m x 4 = 0.32m
         threshold = 0.32
         # threshold = 0.24
         if min_distance < threshold:
@@ -34,7 +37,26 @@ def computeSimpleCost(env, observation):
             collision_cost = 5.0
             env.crashed = True
 
-    cost = lidar_cost + collision_cost
+    contact_points_plane = env.getBulletClient().getContactPoints(env.drone.getDroneID(), env.plane)
+    if contact_points_plane:
+        plane_cost = 5.0
+        env.crashed = True
+
+    obs = env.drone.getDroneStateVector()
+    roll, pitch, _yaw = obs[7:10]
+    wx, wy, wz = obs[13:16]
+    max_tilt = max(abs(roll), abs(pitch))
+    tilt_soft = np.deg2rad(30)  # start charging here
+    tilt_hard = np.deg2rad(60)
+    tilt_cost = _ramp(max_tilt, tilt_soft, tilt_hard) * 1.0
+
+    spin_mag = np.linalg.norm([wx, wy, wz])  # rad s-1
+    spin_soft = 3.0
+    spin_hard = 6.0
+    spin_cost = _ramp(spin_mag, spin_soft, spin_hard) * 1.0
+
+    cost = lidar_cost + collision_cost + plane_cost + tilt_cost + spin_cost
+    # cost = lidar_cost + collision_cost + plane_cost
     info["cost"] = cost
     return info
 
@@ -91,7 +113,7 @@ def computeCost(env, observation):
 
     # cost /= self.CTRL_STEPS
 
-    # TODO: Change this so lidar_cost isn't always being returned, ie when no obstacles
+    # TO-DO: Change this so lidar_cost isn't always being returned, ie when no obstacles
     # return float(cost), float(tilt_cost), float(spin_cost), float(lidar_cost)
     return info
 

@@ -120,70 +120,6 @@ class DroneControllerRPM(BaseDroneController):
         f_mag = np.linalg.norm(self.wind_force)
         self.wind_force = self.wind_force_scale * f_mag * f_dir
 
-    def _dragWind(self):
-        """Simulates the effect of wind on the drone."""
-        # _, orientation = p.getBasePositionAndOrientation(self.drone)
-        # linear_vel, _ = p.getBaseVelocity(self.drone)
-        # base_rot = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
-        # relative_velocity = np.array(linear_vel) - self.wind_force
-
-        # state = self.drone.getDroneStateVector()
-        # base_rot = np.array(self._p.getMatrixFromQuaternion(state[3:7])).reshape(3, 3)
-        # relative_velocity = np.array(state[10:13]) - self.wind_force
-        # drag = np.dot(base_rot.T, self.drone.DRAG_COEFF * np.array(relative_velocity))
-        # self._p.applyExternalForce(
-        #     self.drone.getDroneID(),
-        #     4,
-        #     forceObj=drag,
-        #     posObj=[0, 0, 0],
-        #     flags=self._p.LINK_FRAME,
-        # )
-
-        self._p.applyExternalForce(
-            self.drone.getDroneID(),
-            -1,
-            forceObj=self.wind_force,
-            posObj=[0, 0, 0],
-            flags=self._p.LINK_FRAME,
-        )
-
-    def _groundEffect(self, rpm):
-        """
-        Simulates ground effect, where the drone experiences increased lift
-        when flying closer to the ground. It calculates additional thrust contributions
-        for reach rotor. Allows for a more accurate representation of drone behavior during
-        low-altitude flight.
-        """
-
-        # ---- Kin. info of all links (propellers and center of mass) ----#
-        link_states = self._p.getLinkStates(
-            self.drone.getDroneID(),
-            linkIndices=[0, 1, 2, 3, 4],
-            computeLinkVelocity=1,
-            computeForwardKinematics=1,
-        )
-
-        # ---- Simple, per-propeller ground effects ----#
-        prop_heights = np.array(
-            [
-                link_states[0][0][2],
-                link_states[1][0][2],
-                link_states[2][0][2],
-                link_states[3][0][2],
-            ]
-        )
-        prop_heights = np.clip(prop_heights, self.drone.GND_EFF_H_CLIP, np.inf)
-        gnd_effects = np.array(rpm**2) * self.drone.KF * self.drone.GND_EFF_COEFF * (self.drone.PROP_RADIUS / (4 * prop_heights)) ** 2
-        if np.abs(self.drone.rpy[0]) < np.pi / 2 and np.abs(self.drone.rpy[1]) < np.pi / 2:
-            for i in range(4):
-                self._p.applyExternalForce(
-                    self.drone.getDroneID(),
-                    i,
-                    forceObj=[0, 0, gnd_effects[i]],
-                    posObj=[0, 0, 0],
-                    flags=self._p.LINK_FRAME,
-                )
-
     def beforeStep(self, action):
         """Pre-processing before calling `.step()`."""
         self._checkInitialReset()
@@ -193,6 +129,10 @@ class DroneControllerRPM(BaseDroneController):
             raise ValueError("[ERROR]: The action returned by the controller must be 1 dimensional.")
         self.current_raw_action = action
         processed_action = self.drone.preprocessAction(action)
+
+        self.action_err_sum += float(self.drone.last_action_err)
+        self.action_err_steps += 1
+
         return processed_action
 
     def afterStep(self, truncated):
@@ -209,7 +149,12 @@ class DroneControllerRPM(BaseDroneController):
         """Advances the environment by one simulation step."""
         # if self.PYB_STEPS_PER_CTRL > 1 and self.enable_ground_effect:
         #     self.drone.updateAndStoreKinematicInformation()
-        force_is_on = self.enable_wind and self._wind_effect_active and self.episode_wind_active
+        force_is_on = (
+            self.enable_wind
+            and self._wind_effect_active
+            and self.episode_wind_active
+            and self.ctrl_step_counter >= self.WIND_DELAY_STEPS  # ← delay
+        )
         gust_active = self.rng.uniform() < 0.3
 
         for _ in range(self.PYB_STEPS_PER_CTRL):
@@ -274,6 +219,15 @@ class DroneControllerRPM(BaseDroneController):
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
         truncated = self.afterStep(truncated)
+
+        landed = False
+        if terminated:
+            landed = True
+        info["landed"] = landed
+
+        if terminated or truncated:
+            mean_err = self.action_err_sum / max(self.action_err_steps, 1)
+            info["episode_action_err"] = mean_err
 
         return observation, reward, terminated, truncated, info
 

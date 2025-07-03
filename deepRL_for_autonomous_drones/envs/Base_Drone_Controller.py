@@ -45,7 +45,7 @@ class RedirectStream(object):
         self.dup_stream = os.dup(self.stream.fileno())
         os.dup2(self.fd.fileno(), self.stream.fileno())  # replaces stream
 
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, _type, value, traceback):
         RedirectStream._flush_c_stream(self.stream)  # ensures C stream buffer empty
         os.dup2(self.dup_stream, self.stream.fileno())  # restores stream
         os.close(self.dup_stream)
@@ -112,6 +112,7 @@ class BaseDroneController(gym.Env):
             "medium": 8.94,  # 20 mph
             "high": 17.88,  # 40 mph
         }
+        self.WIND_DELAY_STEPS = 20
 
         # ---- Constants ----#
         self.alpha = np.array([1.0, 1.0, 1.0])
@@ -285,6 +286,9 @@ class BaseDroneController(gym.Env):
         self.pyb_step_counter = 0
         self.ctrl_step_counter = 0
 
+        self.action_err_sum = 0.0
+        self.action_err_steps = 0
+
         # ---- Action sent by controller, possibly normalized and unclipped ----#
         self.drone.setCurrentRawAction(None)
         # ---- Current_raw_action unnormalized if it was normalized ----#
@@ -298,12 +302,10 @@ class BaseDroneController(gym.Env):
 
     def seed(self, seed=None):
         if seed is not None:
-            random.seed(seed)
-            np.random.seed(seed)
-            # self.logger.info("Seed: %s", seed, exc_info=1)
             self.rng = np.random.default_rng(seed)
-            if hasattr(self, "drone"):
-                self.drone.set_seed(seed)
+            random.seed(seed)
+            self.drone.rng = self.rng
+            self._seed = seed
 
     def reset(self, seed=None, options=None):
         """
@@ -312,13 +314,7 @@ class BaseDroneController(gym.Env):
         """
         # seed for reproducibility
         super().reset(seed=seed)
-        # self.seed(seed)
-        # if seed is not None:
-        #     self._seed = seed
-        #     self.logger.info("Seed: %s", seed, exc_info=1)
-        #     self.rng = np.random.default_rng(seed)
-        #     if hasattr(self, "drone"):
-        #         self.drone.set_seed(seed)
+        self.seed(seed)
 
         # if not hasattr(self, "logger"):
         #     self._init_logger()
@@ -330,7 +326,7 @@ class BaseDroneController(gym.Env):
         self._resetEnvironment()
 
         # ---- Update and store the drones kinematic information ----#
-        # self.drone.updateAndStoreKinematicInformation()
+        self.drone.updateAndStoreKinematicInformation()
 
         obs = self._getObservation()
         if self.observation_type != 1:
@@ -460,8 +456,8 @@ class BaseDroneController(gym.Env):
         self._p.applyExternalForce(self.drone.getDroneID(), -1, forceObj=F_drag, posObj=[px, py, pz], flags=self._p.WORLD_FRAME)
 
         # ---- Only printing at certain steps to not spam console ----#
-        if self.pyb_step_counter % 240 == 0:
-            print(f"|F|={np.linalg.norm(F_drag):.3f} N  " f"level={self.current_wind_level}")
+        # if self.pyb_step_counter % 240 == 0:
+        # print(f"|F|={np.linalg.norm(F_drag):.3f} N  " f"level={self.current_wind_level}")
 
     def _getObservation(self):
         """
@@ -616,8 +612,11 @@ class BaseDroneController(gym.Env):
             ]
 
             # ---- Set a fixed random seed to ensure consistency ----#
-            rng = np.random.default_rng(seed=42)
+            # rng = np.random.default_rng(seed=42)
             # rng = np.random.default_rng(seed=self._seed)
+
+            seed_for_trees = getattr(self, "_seed", None)
+            rng = np.random.default_rng(seed_for_trees if seed_for_trees is not None else 42)
 
             num_trees = 50
             min_distance_from_pad = 1.0
@@ -691,6 +690,9 @@ class BaseDroneController(gym.Env):
         """Enable or diable wind effects."""
         # print(f"Wind effect set to: {flag}")
         self._wind_effect_active = flag
+
+    def enableWind(self, flag: bool):
+        self.enable_wind = flag
 
     def setStaticBlocks(self, flag: bool):
         """Enable or disable static blocks."""

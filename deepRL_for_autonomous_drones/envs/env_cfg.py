@@ -18,6 +18,6 @@ class EnvCfg:
     cost_function: int = 2
     debug_axes: bool = False
     add_obstacles: bool = True
-    enable_wind: bool = True
+    enable_wind: bool = False
     enable_curriculum_learning: bool = False
     observation_type: int = 2

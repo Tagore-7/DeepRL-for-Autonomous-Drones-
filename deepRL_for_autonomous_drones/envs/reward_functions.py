@@ -2,7 +2,7 @@ import pybullet as p
 import numpy as np
 
 
-def safetyRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, lidar_cost=0.0):
+def safetyRewardFunction(env, _observation, action, _tilt_cost=0.0, _spin_cost=0.0, _lidar_cost=0.0):
     """
     Computes the reward function based on the author's paper: Towards end-to-end control for UAV autonomous landing via deep reinforcement learning,
 
@@ -28,13 +28,14 @@ def safetyRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0,
     spin_penalty = abs(wx) + abs(wy) + abs(wz)  # Weighted penalty for high spin
 
     # Compute shaping reward
-    shaping = -100 * distance_penalty - 10 * velocity_penalty - 1 * action_penalty - 5 * tilt_penalty - 5 * spin_penalty
+    shaping = -100 * distance_penalty - 10 * velocity_penalty - 1 * action_penalty - 10 * tilt_penalty - 10 * spin_penalty
 
     # Check if drone has landed safely
     contact_points = p.getContactPoints(env.drone.getDroneID(), env.launch_pad)
 
     if contact_points:
         if abs(vx) <= 0.1 and abs(vy) <= 0.1 and abs(vz) <= 0.1:
+            shaping += 30.0
             print("Super soft landing")
         elif abs(vx) < 0.3 and abs(vy) < 0.3 and abs(vz) < 0.3:
             print("Landed")
@@ -46,18 +47,16 @@ def safetyRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0,
         shaping += env.c
         env.landed = True
 
-    contact_points_plane = p.getContactPoints(env.drone.getDroneID(), env.plane)
-    if contact_points_plane:
-        shaping -= 100
-        env.crashed = True
-
-    # shaping += obstacleRewardShaping(env)
+    if tilt_penalty < 0.3 and spin_penalty < 0.3:
+        shaping += 1.0
+    elif tilt_penalty < 0.2 and spin_penalty < 0.2:
+        shaping += 2.0
 
     # Reward difference (temporal difference shaping)
     reward = shaping if env.previous_shaping is None else shaping - env.previous_shaping
     env.previous_shaping = shaping
 
-    return reward / 50
+    return reward / 20
 
 
 def firstRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, lidar_cost=0.0):
@@ -78,7 +77,7 @@ def firstRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, 
     obs = env.drone.getDroneStateVector()
     px, py, pz = obs[0:3]  # Position
     vx, vy, vz = obs[10:13]  # Linear velocity
-    roll, pitch, _yaw = obs[7:10]
+    # roll, pitch, _yaw = obs[7:10]
     ax, ay, az, aw = action
 
     rel_pos = np.array([px, py, pz]) - env.target_pos
@@ -134,7 +133,7 @@ def firstRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, 
     return reward
 
 
-def originalFirstRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, lidar_cost=0.0):
+def originalFirstRewardFunction(env, observation, action, _tilt_cost=0.0, _spin_cost=0.0, _lidar_cost=0.0):
     """
     Computes the reward function based on the author's paper: Towards end-to-end control for UAV autonomous landing via deep reinforcement learning,
 
@@ -202,7 +201,7 @@ def originalFirstRewardFunction(env, observation, action, tilt_cost=0.0, spin_co
     return reward
 
 
-def secondRewardFunction(env, observation, _action, tilt_cost=0.0, spin_cost=0.0, lidar_cost=0.0):
+def secondRewardFunction(env, observation, _action, _tilt_cost=0.0, _spin_cost=0.0, _lidar_cost=0.0):
     """
     Computes the reward function based on the author's paper: A reinforce-ment learning approach for autonomous control and landing of a quadrotor,
 
@@ -263,7 +262,7 @@ def secondRewardFunction(env, observation, _action, tilt_cost=0.0, spin_cost=0.0
     return reward
 
 
-def thirdRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, lidar_cost=0.0):
+def thirdRewardFunction(env, observation, action, _tilt_cost=0.0, _spin_cost=0.0, _lidar_cost=0.0):
     """
     Computes the reward function based on the author's paper: "Inclined Quadrotor Landing using Deep Reinforcement Learning"
 

@@ -15,7 +15,7 @@ import pyrallis
 from tianshou.env import BaseVectorEnv, DummyVectorEnv, RayVectorEnv, ShmemVectorEnv, SubprocVectorEnv
 from fsrl.agent import PPOLagAgent
 from fsrl.utils import BaseLogger, TensorboardLogger, WandbLogger
-from fsrl.utils.exp_util import auto_name
+from fsrl.utils.exp_util import auto_name, seed_all
 from fsrl.data import FastCollector
 from deepRL_for_autonomous_drones.config.ppol_cfg import TrainCfg, DroneLandingCfg
 
@@ -31,18 +31,18 @@ WORKER_MAPPING = {
 }
 
 
-def make_env(task, graphics: bool = False):
+def make_env(task, seed: int = 42, graphics: bool = False):
     render_mode = "human" if graphics else None
     env = gym.make(task, render_mode=render_mode, graphics=graphics)
     env = FlattenObservation(env)
-    env.reset()
+    env.reset(seed=seed)
     return env
 
 
-def make_training_env(task):
+def make_training_env(task, seed: int = 42):
     env = gym.make(task)
     env = FlattenObservation(env)
-    # env.reset()
+    env.reset(seed=seed)
     return env
 
 
@@ -68,8 +68,10 @@ def train(args: TrainCfg = TrainCfg):
     # logger = TensorboardLogger(args.logdir, log_txt=True, name=args.name)
     logger.save_config(cfg, verbose=args.verbose)
 
-    # demo_env = make_env(args.task, graphics=False)
-    demo_env = make_training_env(args.task)
+    base_seed = args.seed
+    seed_all(base_seed)
+
+    demo_env = make_training_env(args.task, seed=args.seed)
 
     agent = PPOLagAgent(
         env=demo_env,
@@ -102,19 +104,15 @@ def train(args: TrainCfg = TrainCfg):
         action_bound_method=args.action_bound_method,
     )
 
+    demo_env.close()
+
     training_num = min(args.training_num, args.episode_per_collect)
     worker = WORKER_MAPPING.get(args.worker)
     if worker is None:
         raise ValueError(f"Unknown worker type: {args.worker}")
 
-    # train_envs = worker([lambda: make_env(args.task) for _ in range(training_num)])
-    # test_envs = worker([lambda: make_env(args.task) for _ in range(args.testing_num)])
-
-    train_envs = worker([lambda: make_training_env(args.task) for _ in range(training_num)])
-    test_envs = worker([lambda: make_training_env(args.task) for _ in range(args.testing_num)])
-
-    # train_envs = worker([lambda: make_training_env(args.task, args.seed) for _ in range(training_num)])
-    # test_envs = worker([lambda: make_training_env(args.task, args.seed) for _ in range(args.testing_num)])
+    train_envs = worker([(lambda idx=i: make_env(args.task, seed=base_seed + idx)) for i in range(training_num)])
+    test_envs = worker([(lambda idx=i: make_env(args.task, seed=base_seed + 100 + idx)) for i in range(args.testing_num)])
 
     agent.learn(
         train_envs=train_envs,
@@ -133,9 +131,12 @@ def train(args: TrainCfg = TrainCfg):
         verbose=args.verbose,
     )
 
+    train_envs.close()
+    test_envs.close()
+
     if __name__ == "__main__":
         # env = make_training_env(args.task, args.seed)
-        env = make_env(args.task, graphics=args.render)
+        env = make_env(args.task, graphics=args.render, seed=base_seed)
 
         agent.policy.eval()
         collector = FastCollector(agent.policy, env)

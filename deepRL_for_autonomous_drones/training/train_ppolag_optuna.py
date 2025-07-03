@@ -36,23 +36,23 @@ def make_env(task, seed: int = 42, graphics: bool = False):
     render_mode = "human" if graphics else None
     env = gym.make(task, render_mode=render_mode, graphics=graphics)
     env = FlattenObservation(env)
-    # env.reset(seed=seed)
+    env.reset(seed=seed)
     return env
 
 
 def sample_ppo_hparams(trial: optuna.Trial) -> Dict[str, Any]:
     return {
-        "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
+        "batch_size": trial.suggest_categorical("batch_size", [128, 256]),
         "gamma": trial.suggest_float("gamma", 0.95, 0.999, step=0.001),
-        "lr": trial.suggest_float("lr", 1e-5, 4e-4, log=True),
+        "lr": trial.suggest_float("lr", 1e-5, 3e-4, log=True),
         "gae_lambda": trial.suggest_float("gae_lambda", 0.9, 0.98),
         "vf_coef": trial.suggest_float("vf_coef", 0.1, 1.0),
         "eps_clip": trial.suggest_float("eps_clip", 0.1, 0.3),
-        "hidden_sizes": tuple([trial.suggest_categorical("hidden_sizes", [64, 128, 256])] * 2),
+        "hidden_sizes": tuple([trial.suggest_categorical("hidden_sizes", [128, 256])] * 2),
         "training_num": trial.suggest_int("training_num", 12, 20, step=4),
-        "step_per_epoch": trial.suggest_int("step_per_epoch", 6000, 14000, step=2000),
+        "step_per_epoch": trial.suggest_int("step_per_epoch", 10000, 20000, step=2000),
         "repeat_per_collect": trial.suggest_int("repeat_per_collect", 1, 10),
-        "cost_limit": trial.suggest_categorical("cost_limit", [5, 10]),
+        "cost_limit": trial.suggest_categorical("cost_limit", [5, 6, 8, 10]),
         "target_kl": trial.suggest_float("target_kl", 0.02, 0.08, step=0.02),
         "lagrangian_pid": (
             trial.suggest_float("kp", 0.01, 0.2, log=True),  # Kp
@@ -63,7 +63,7 @@ def sample_ppo_hparams(trial: optuna.Trial) -> Dict[str, Any]:
 
 
 def evaluate_agent(agent, env, episodes=10):
-    rews, lens, costs = agent.evaluate(
+    rews, _, costs = agent.evaluate(
         test_envs=env,
         eval_episodes=episodes,
         render=False,
@@ -76,31 +76,35 @@ def objective(trial: optuna.Trial, task: str, seed: int, train_epochs: int):
     try:
         params = sample_ppo_hparams(trial)
         logger = TensorboardLogger("tensorboard", log_txt=True, name="PPOL_optuna")
-        logger.save_config(params, verbose=True)
+        # logger.save_config(params, verbose=True)
 
         training_num = params.pop("training_num")
         batch_size = params.pop("batch_size")
         step_per_epoch = params.pop("step_per_epoch")
         repeat_per_collect = params.pop("repeat_per_collect")
 
-        demo_env = make_env(task, seed=seed)
-        seed_all(seed)
+        base_seed = seed + trial.number
+        seed_all(base_seed)
+
+        demo_env = make_env(task, seed=base_seed)
 
         agent = PPOLagAgent(
             env=demo_env,
             logger=logger,
             device="cpu",
-            seed=seed,
+            seed=base_seed,
             use_lagrangian=True,
             **params,  # n_steps, lr, etc.
         )
+
+        demo_env.close()
 
         training_num_workers = min(training_num, 20)
         worker = WORKER_MAPPING.get("SubprocVectorEnv")
         if worker is None:
             raise ValueError("Unknown worker type")
 
-        train_envs = worker([lambda: make_env(task) for _ in range(training_num_workers)])
+        train_envs = worker([(lambda idx=i: make_env(task, seed=base_seed + idx)) for i in range(training_num_workers)])
 
         agent.learn(
             train_envs=train_envs,
@@ -111,10 +115,10 @@ def objective(trial: optuna.Trial, task: str, seed: int, train_epochs: int):
             verbose=True,
         )
 
-        demo_env.close()
         train_envs.close()
 
-        eval_env = make_env(task)
+        eval_env = make_env(task, seed=base_seed)
+
         reward, cost = evaluate_agent(agent, eval_env, episodes=10)
         eval_env.close()
 
@@ -132,15 +136,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", default="SafetyDroneLanding-v0")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--trials", type=int, default=40)
-    parser.add_argument("--train-epochs", type=int, default=1000)
+    parser.add_argument("--trials", type=int, default=80)
+    parser.add_argument("--train-epochs", type=int, default=750)
     parser.add_argument("--storage", default="sqlite:///ppo_moo.db", help="Optuna storage URI")
     args = parser.parse_args()
+
+    sampler = optuna.samplers.GPSampler(seed=args.seed)
 
     study = optuna.create_study(
         study_name=f"PPOL-{args.task}-MOO",
         directions=("maximize", "minimize"),
-        sampler=optuna.samplers.NSGAIISampler(seed=args.seed),
+        sampler=sampler,
         storage=args.storage,
         load_if_exists=True,
     )

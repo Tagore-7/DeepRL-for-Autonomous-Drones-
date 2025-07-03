@@ -45,15 +45,15 @@ class TrainCfg:
     step_per_epoch: int = 10000
     repeat_per_collect: int = 4  # increasing this can improve efficiency, but less stability
     buffer_size: int = 100000
-    worker: str = "ShmemVectorEnv"
-    # worker: str = "SubprocVectorEnv"
+    # worker: str = "ShmemVectorEnv"
+    worker: str = "SubprocVectorEnv"
     training_num: int = 20
     testing_num: int = 2
     # general params
     batch_size: int = 256
     reward_threshold: float = 10000  # for early stop purpose
     save_interval: int = 20
-    resume: bool = False  # TODO
+    resume: bool = False
     save_ckpt: bool = True  # set this to True to save the policy model
     verbose: bool = True
     render: bool = False
@@ -61,22 +61,28 @@ class TrainCfg:
     logdir: str = "benchmark_results"
     project: str = "fast-safe-rl"
     group: Optional[str] = None
-    name: Optional[str] = "ppol-no-wind-5"
+    name: Optional[str] = "ppol-no-wind-23"
     prefix: Optional[str] = "ppol"
     suffix: Optional[str] = ""
 
 
 @dataclass
 class DroneLandingCfg(TrainCfg):
-    epoch: int = 1500
-    # cost_limit = 25
-    cost_limit: float = 6
-    repeat_per_collect: int = 7
+    name: Optional[str] = "ppol-13"
+    epoch: int = 3500
+    # cost_limit: float = 6
+    cost_limit: float = 25
+    repeat_per_collect: int = 5
     lr: float = 2.5e-5
-    # lr: float = 1e-4
+    # lr: float = 2e-5
     gae_lambda: float = 0.95
-    vf_coef: float = 0.8
-    # hidden_sizes: Tuple[int, ...] = (64, 64)
+    vf_coef: float = 0.6
     step_per_epoch: int = 14000
     target_kl: float = 0.06
-    lagrangian_pid: Tuple[float, ...] = (0.15, 0.005, 0.1)
+    lagrangian_pid: Tuple[float, ...] = (0.05, 0.001, 0.15)  # (0.15, 0.005, 0.1)
+    max_grad_norm: Optional[float] = 0.25
+    rescaling: bool = False
+
+    # gamma: float = 0.97
+    # eps_clip: float = 0.3
+    # hidden_sizes: Tuple[int, ...] = (256, 256)
