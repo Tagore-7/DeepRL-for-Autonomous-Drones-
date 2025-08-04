@@ -1,11 +1,3 @@
-from __future__ import annotations
-
-"""train_ppo_agent_sb3.py
-
-Trains PPO from Stable-Baselines3 on the drone landing task.
-Configuration mirrors `train_ppol_agent.py` for comparison.
-"""
-
 import os
 from dataclasses import asdict
 from typing import Dict, Callable
@@ -23,9 +15,8 @@ from fsrl.utils.logger import WandbLogger
 from fsrl.utils.exp_util import auto_name
 import deepRL_for_autonomous_drones
 from deepRL_for_autonomous_drones.config.ppo_cfg import DroneLandingCfg
-import deepRL_for_autonomous_drones.envs 
+from deepRL_for_autonomous_drones import envs
 from gymnasium.wrappers import FlattenObservation
-
 
 # ────────────────────────────── helpers ───────────────────────────────────
 
@@ -35,45 +26,34 @@ WORKERS: Dict[str, Callable] = {
     "DummyVectorEnv": DummyVecEnv,
 }
 
-def make_env(task: str):
-    """Factory that builds a *training* environment with **wind disabled**."""
+def make_env(task: str, wind_level: str = "none",reward_function_id: int = 1 ):
     def _init():
         env = gym.make(task)
         if hasattr(env.unwrapped, "setWindEffects"):
-            env.unwrapped.setWindEffects(False)
+            env.unwrapped.setWindEffects(wind_level != "none")
+        if hasattr(env.unwrapped, "setWindLevel"):
+            env.unwrapped.setWindLevel(wind_level)
         env = FlattenObservation(env)
         return Monitor(env)
     return _init
 
-
-# ────────────────────────────── main entry ────────────────────────────────
-
-def main(cfg: DroneLandingCfg):
-    """Train SB3 PPO according to *cfg* on the drone-landing task."""
-
-    # reproducibility
+def train_phase(cfg: DroneLandingCfg, wind_level: str, pretrained_model_path: str = None):
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
 
-    # build vectorised envs
     WorkerCls = WORKERS[cfg.worker]
-    train_envs = WorkerCls([make_env(cfg.task) for _ in range(cfg.training_num)])
-    test_envs = WorkerCls([make_env(cfg.task) for _ in range(cfg.testing_num)])
+    env_fns = [make_env(cfg.task, wind_level) for _ in range(cfg.training_num)]
+    train_envs = WorkerCls(env_fns)
 
-    # logger (WandB by default ‑ change here if you prefer TensorBoard)
     default_cfg = asdict(DroneLandingCfg())
-    run_name = cfg.name or auto_name(default_cfg, asdict(cfg), cfg.prefix, cfg.suffix)
-    group_name = cfg.group or f"{cfg.task}-cost-{cfg.cost_limit}"
-    log_dir = os.path.join(cfg.logdir, cfg.project, group_name) if cfg.logdir else None
-    logger = WandbLogger(cfg, cfg.project, group_name, run_name, log_dir)
+    name = cfg.name or auto_name(default_cfg, asdict(cfg), cfg.prefix, cfg.suffix)
+    group = cfg.group or f"{cfg.task}-cost-{cfg.cost_limit}-wind-{wind_level}"
+    log_dir = os.path.join(cfg.logdir, cfg.project, group)
+    logger = WandbLogger(cfg, cfg.project, group, name, log_dir)
     logger.save_config(asdict(cfg))
 
-    # SB3-compatible policy architecture
-    policy_kwargs = dict(
-        net_arch=list(cfg.hidden_sizes)
-    )
+    policy_kwargs = dict(net_arch=list(cfg.hidden_sizes))
 
-    # define SB3 PPO agent
     agent = PPO(
         policy="MlpPolicy",
         env=train_envs,
@@ -84,7 +64,7 @@ def main(cfg: DroneLandingCfg):
         gamma=cfg.gamma,
         gae_lambda=cfg.gae_lambda,
         clip_range=cfg.eps_clip,
-        ent_coef=0.0,                      
+        ent_coef=0.0,
         vf_coef=cfg.vf_coef,
         max_grad_norm=cfg.max_grad_norm,
         normalize_advantage=cfg.norm_adv,
@@ -93,25 +73,32 @@ def main(cfg: DroneLandingCfg):
         seed=cfg.seed,
         device=cfg.device,
         verbose=cfg.verbose,
-        tensorboard_log=log_dir,           
+        tensorboard_log=log_dir
     )
 
-    # training
-    total_timesteps = cfg.epoch * cfg.step_per_epoch
-    agent.learn(
-        total_timesteps=total_timesteps, 
-        progress_bar=True,
-    )
+    if pretrained_model_path:
+        agent.set_parameters(pretrained_model_path)
 
-    save_path = os.path.join(log_dir, "checkpoint", "ppo_model")
+    agent.learn(total_timesteps=cfg.epoch * cfg.step_per_epoch, progress_bar=True)
+
+    save_path = os.path.join(log_dir, "checkpoint", f"ppo_model_wind_{wind_level}")
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     agent.save(save_path)
-    print(f"Model saved to: {save_path}")
-
+    print(f"Saved model for wind level '{wind_level}' to {save_path}")
     train_envs.close()
-    test_envs.close()
+    return save_path
 
+def run_curriculum(cfg: DroneLandingCfg):
+    # Phase 1: Normal training (no wind)
+    cfg.epoch = 750
+    base_model_path = train_phase(cfg, wind_level="none", pretrained_model_path=None)
+
+    # Phase 2: Wind curriculum
+    wind_stages = ["light_breeze", "light_wind", "medium_wind", "high_wind"]
+    cfg.epoch = 750
+    for wind_level in wind_stages:
+        base_model_path = train_phase(cfg, wind_level=wind_level, pretrained_model_path=base_model_path)
 
 if __name__ == "__main__":
     cfg = pyrallis.parse(config_class=DroneLandingCfg)
-    main(cfg)
+    run_curriculum(cfg)

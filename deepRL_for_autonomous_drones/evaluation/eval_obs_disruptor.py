@@ -412,9 +412,9 @@ def evaluate_agent_with_wind_effect(
     wind_level_map = {
         0.0: "none",
         2.24: "light_breeze",
-        4.47: "light",
-        8.94: "medium",
-        17.88: "high",
+        4.47: "light_wind",
+        8.94: "medium_wind",
+        17.88: "high_wind",
     }
     results = []
 
@@ -1023,102 +1023,107 @@ def visualize_performance_wind(
     plt.savefig("deepRL_for_autonomous_drones/pics/cost_boxplot_wind.png")
 
 
-
 if __name__ == "__main__":
-    # evaluate_agent_with_wind_effect(
-    #     model_path="deepRL_for_autonomous_drones/training/results/fast-safe-rl/SafetyDroneLanding-v0-cost-0/ppo-370b/checkpoint/ppo_model.zip",
-    #     env_name="SafetyDroneLanding-v0",
-    #     render= False,
-    #     episodes=20,
-    #     save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_wind_effect.csv" 
-    # )
-    # evaluate_agent_with_gussian_noise(
-    #     model_path="deepRL_for_autonomous_drones/training/results/fast-safe-rl/SafetyDroneLanding-v0-cost-0/ppo-370b/checkpoint/ppo_model.zip",
-    #     env_name="SafetyDroneLanding-v0",
-    #     render= False,
-    #     episodes=20, 
-    #     noise_std=0.3,
-    #     save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_gussian_noise_results.csv"
-    # )
-    # evaluate_agent_without_noise(
-    #     model_path="deepRL_for_autonomous_drones/training/results/fast-safe-rl/SafetyDroneLanding-v0-cost-0/ppo-370b/checkpoint/ppo_model.zip",
-    #     env_name="SafetyDroneLanding-v0",
-    #     episodes=20, 
-    #     render=False,
-    #     save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv"
-    # )
-    # evaluate_agent_with_observation_delay(
-    #     model_path="deepRL_for_autonomous_drones/training/results/fast-safe-rl/SafetyDroneLanding-v0-cost-0/ppo-370b/checkpoint/ppo_model.zip",
-    #     env_name="SafetyDroneLanding-v0",
-    #     episodes=20,
-    #     delay_frames=3,
-    #     render=False,
-    #     save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_delay_results.csv"
-    # )
-    # evaluate_agent_with_dropout_effect(
-    #     model_path="deepRL_for_autonomous_drones/training/results/fast-safe-rl/SafetyDroneLanding-v0-cost-0/ppo-370b/checkpoint/ppo_model.zip",
-    #     env_name="SafetyDroneLanding-v0",
-    #     render=True,
-    #     episodes=20,
-    #     dropout_prob=0.1, 
-    #     min_scale=0.01, 
-    #     max_scale=0.1, 
-    #     save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_dropout_effect.csv"
-    # )
-    # compare_with_dropout_results(
-    #     normal_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv",
-    #     dropout_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_dropout_effect.csv",
-    #     save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_dropout.csv"
-    # )
-    # compare_with_and_without_noise_results(
-    #     normal_results_file_path= "deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv",
-    #     noisy_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_gussian_noise_results.csv",
-    #     save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparasion_btw_with_and_without_gussian_noise.csv"
-    # )
-    # compare_with_delay_results(
-    #     normal_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv",
-    #     delay_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_delay_results.csv",
-    #     save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_delay.csv"
-    # )
-    # compare_with_and_without_wind_results(
-    #     normal_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv",
-    #     wind_effects_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_wind_effect.csv",
-    #     save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_and_without_wind_effect.csv"
-    # )
-    # visualize_performance(
-    #     results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparasion_btw_with_and_without_gussian_noise.csv"
-    # )
-    # visualize_performance_delay(
-    #     results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_delay.csv"
-    # )
-    # visualize_performance_wind(
-    #     results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_and_without_wind_effect.csv"
-    # )
-    # visualize_performance_dropout(
-    #     results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_dropout.csv"
-    # )
+    # orginal_model_path =  "benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-0-wind-high_wind/checkpoint/ppo_model_wind_high_wind.zip"
+    # orginal_model_path =  "benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-0-wind-none/checkpoint/ppo_model_wind_none.zip"
+    orginal_model_path =  "benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-0-wind-light_breeze/checkpoint/ppo_model_wind_light_breeze.zip"
+    # orginal_model_path =  "benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-0-wind-light_wind/checkpoint/ppo_model_wind_light_wind.zip"
+    # orginal_model_path =  "benchmark_results/fast-safe-rl/SafetyDroneLanding-v0-cost-0-wind-medium_wind/checkpoint/ppo_model_wind_medium_wind.zip"
 
-    # evaluate_agent_with_bias_drift(
-    # model_path="deepRL_for_autonomous_drones/training/results/fast-safe-rl/SafetyDroneLanding-v0-cost-0/ppo-370b/checkpoint/ppo_model.zip",
-    # env_name="SafetyDroneLanding-v0",
-    # render=False,
-    # episodes=20,
-    # drift_magnitude=0.1,
-    # save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_bias_drift.csv"
-    # )
+    evaluate_agent_with_wind_effect(
+        model_path= orginal_model_path, 
+        env_name="SafetyDroneLanding-v0",
+        render= False,
+        episodes=20,
+        save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_wind_effect.csv" 
+    )
+    evaluate_agent_with_gussian_noise(
+        model_path=orginal_model_path, 
+        env_name="SafetyDroneLanding-v0",
+        render= False,
+        episodes=20, 
+        noise_std=0.1,
+        save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_gussian_noise_results.csv"
+    )
+    evaluate_agent_without_noise(
+        model_path=orginal_model_path, 
+        env_name="SafetyDroneLanding-v0",
+        episodes=20, 
+        render=False,
+        save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv"
+    )
+    evaluate_agent_with_observation_delay(
+        model_path=orginal_model_path, 
+        env_name="SafetyDroneLanding-v0",
+        episodes=20,
+        delay_frames=1,
+        render=False,
+        save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_delay_results.csv"
+    )
+    evaluate_agent_with_dropout_effect(
+        model_path=orginal_model_path, 
+        env_name="SafetyDroneLanding-v0",
+        render=False,
+        episodes=20,
+        dropout_prob=0.1, 
+        min_scale=0.01, 
+        max_scale=0.1, 
+        save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_dropout_effect.csv"
+    )
+    compare_with_dropout_results(
+        normal_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv",
+        dropout_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_dropout_effect.csv",
+        save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_dropout.csv"
+    )
+    compare_with_and_without_noise_results(
+        normal_results_file_path= "deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv",
+        noisy_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_gussian_noise_results.csv",
+        save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparasion_btw_with_and_without_gussian_noise.csv"
+    )
+    compare_with_delay_results(
+        normal_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv",
+        delay_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_delay_results.csv",
+        save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_delay.csv"
+    )
+    compare_with_and_without_wind_results(
+        normal_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv",
+        wind_effects_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_wind_effect.csv",
+        save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_and_without_wind_effect.csv"
+    )
+    visualize_performance(
+        results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparasion_btw_with_and_without_gussian_noise.csv"
+    )
+    visualize_performance_delay(
+        results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_delay.csv"
+    )
+    visualize_performance_wind(
+        results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_and_without_wind_effect.csv"
+    )
+    visualize_performance_dropout(
+        results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_dropout.csv"
+    )
 
-    # compare_with_bias_drift_results(
-    #     normal_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv",
-    #     bias_drift_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_bias_drift.csv",
-    #     save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_bias_drift.csv"
-    # )
+    evaluate_agent_with_bias_drift(
+   model_path=orginal_model_path, 
+    env_name="SafetyDroneLanding-v0",
+    render=False,
+    episodes=20,
+    drift_magnitude=0.1,
+    save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_bias_drift.csv"
+    )
 
-    # visualize_performance_bias(
-    #     results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_bias_drift.csv"
-    # )
+    compare_with_bias_drift_results(
+        normal_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_obs_without_noise_results.csv",
+        bias_drift_results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_results_with_bias_drift.csv",
+        save_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_bias_drift.csv"
+    )
+
+    visualize_performance_bias(
+        results_file_path="deepRL_for_autonomous_drones/evaluation/evaluations/eval_comparison_with_bias_drift.csv"
+    )
 
     evaluate_agent_with_clipping(
-        model_path="deepRL_for_autonomous_drones/training/results/fast-safe-rl/SafetyDroneLanding-v0-cost-0/ppo-370b/checkpoint/ppo_model.zip",
+        model_path=orginal_model_path, 
         env_name="SafetyDroneLanding-v0",
         render=False,
         episodes=20,

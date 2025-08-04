@@ -74,8 +74,6 @@ class TrainCfg:
 class DroneLandingCfg(TrainCfg):
     """Overrides tuned for the drone‑landing task."""
 
-  
-
     epoch: int = 1500
     step_per_epoch: int = 14000
     repeat_per_collect: int = 7

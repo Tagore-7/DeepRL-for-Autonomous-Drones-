@@ -52,6 +52,25 @@ def safetyRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0,
         env.crashed = True
 
     # shaping += obstacleRewardShaping(env)
+    # ────── HOVER-PENALTY  (NEW) ────────────────────────────────────────────
+    # 1. altitude above pad (positive z => higher)
+    altitude = abs(rel_pos[2])                      # |pz - pad_z|
+
+    # 2. current step index (Gymnasium keeps _elapsed_steps)
+    step = getattr(env, "_elapsed_steps", 0)
+
+    # 3. max episode length
+    max_episode_steps = (
+        getattr(env, "max_episode_steps",           
+                getattr(env.spec, "max_episode_steps", 500))
+    )
+
+    hover_penalty = 0.0
+    if altitude > 1.0:                              # no penalty below 1 m
+        progress_ratio = step / max_episode_steps   # 0 → 1
+        hover_penalty  = -0.005 * altitude * (1.0 + 2.0 * progress_ratio)
+    shaping += hover_penalty
+    # ────────────────────────────────────────────────────────────────────────
 
     # Reward difference (temporal difference shaping)
     reward = shaping if env.previous_shaping is None else shaping - env.previous_shaping
@@ -107,7 +126,8 @@ def firstRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, 
         landing_bonus = SOFT_LAND_REWARD if safe_landing else HARD_LAND_REWARD
         env.c = 10 * (1 - abs(ax)) + 10 * (1 - abs(ay)) + 10 * (1 - abs(az)) + 10 * (1 - abs(aw))  # Bonus for throttle tending to zero
         shaping += env.c
-        env.landed = True
+        env.landed = True 
+
 
     # Reward difference (temporal difference shaping)
     # delta = shaping if env.previous_shaping is None else shaping - env.previous_shaping
@@ -127,6 +147,7 @@ def firstRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, 
     alive = tilt_cost < 0.4 and spin_cost < 0.4 and lidar_cost < 0.2
     # if alive:
     #     reward += ALIVE_BONUS
+
 
     reward = delta + landing_bonus + (ALIVE_BONUS if alive else 0.0)
     reward = reward / SCALE
