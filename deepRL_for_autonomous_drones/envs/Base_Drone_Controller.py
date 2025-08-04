@@ -69,6 +69,8 @@ class BaseDroneController(gym.Env):
         self._p = self._setup_client_and_physics()
         self.bullet_client_id = self._p._client
 
+        self.max_episode_steps = 10000
+
         self.use_graphics = graphics
         # ---- Parameter arguments ----#
         self.visual_mode = self.args.visual_mode
