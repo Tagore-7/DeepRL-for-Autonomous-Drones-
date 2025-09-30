@@ -1,60 +1,34 @@
 import pybullet as p
 import numpy as np
 
+def landing_reward(env, drone_pos, drone_vel, actions):
+    reward = 0
 
-def safetyRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, lidar_cost=0.0):
-    """
-    Computes the reward function based on the author's paper: Towards end-to-end control for UAV autonomous landing via deep reinforcement learning,
-
-    """
-    obs = env.drone.getDroneStateVector()
-    px, py, pz = obs[0:3]  # Position
-    vx, vy, vz = obs[10:13]  # Linear velocity
-    roll, pitch, _yaw = obs[7:10]
-    wx, wy, wz = obs[13:16]
-    ax, ay, az, aw = (
-        action[0],
-        action[1],
-        action[2],
-        action[3],
-    )  # Actions from the agent
-
-    rel_pos = np.array([px, py, pz]) - env.target_pos
-    rel_vel = np.array([vx, vy, vz]) - np.array([0, 0, 0])
-    distance_penalty = np.linalg.norm(rel_pos)  # Distance penalty
-    velocity_penalty = np.linalg.norm(rel_vel)  # Velocity penalty
-    action_penalty = np.linalg.norm([ax, ay, az, aw])  # Action penalty
-    tilt_penalty = abs(roll) + abs(pitch)  # Weighted penalty for large tilt
-    spin_penalty = abs(wx) + abs(wy) + abs(wz)  # Weighted penalty for high spin
-
-    # Compute shaping reward
-    shaping = -100 * distance_penalty - 10 * velocity_penalty - 1 * action_penalty - 5 * tilt_penalty - 5 * spin_penalty
-
-    # Check if drone has landed safely
-    contact_points = p.getContactPoints(env.drone.getDroneID(), env.launch_pad)
-
+    contact_points = p.getContactPoints(env.drone.getDroneID(), env.landing_pad)
     if contact_points:
-        if abs(vx) <= 0.1 and abs(vy) <= 0.1 and abs(vz) <= 0.1:
-            print("Super soft landing")
-        elif abs(vx) < 0.3 and abs(vy) < 0.3 and abs(vz) < 0.3:
-            print("Landed")
-        # elif abs(vx) < 0.5 and abs(vy) < 0.5 and abs(vz) < 0.5:
-        #     print("Hard landing")
-        # else:
-        #     print("Crashed")
-        env.c = 10 * (1 - abs(ax)) + 10 * (1 - abs(ay)) + 10 * (1 - abs(az)) + 10 * (1 - abs(aw))  # Bonus for throttle tending to zero
-        shaping += env.c
+        if abs(drone_vel[0]) <= 0.1 and abs(drone_vel[1]) <= 0.1 and abs(drone_vel[2]) <= 0.1:
+            env.soft_landing_count += 1
+            if env.soft_landing_count % 25 == 0:
+                print(f"|Super soft landing|= {env.soft_landing_count}")
+        elif abs(drone_vel[0]) < 0.3 and abs(drone_vel[1]) < 0.3 and abs(drone_vel[2]) < 0.3:
+            env.normal_landing_count += 1
+            if env.normal_landing_count % 25 == 0:
+                print(f"|Landed|= {env.normal_landing_count}")
+        env.c = 10 * (1 - abs(actions[0])) + 10 * (1 - abs(actions[1])) + 10 * (1 - abs(actions[2])) + 10 * (1 - abs(actions[3]))  # Bonus for throttle tending to zero
+        reward += env.c
         env.landed = True
+    return reward
 
+def plane_penalty(env):
+    reward = 0
     contact_points_plane = p.getContactPoints(env.drone.getDroneID(), env.plane)
     if contact_points_plane:
-        shaping -= 100
+        reward -= 100
         env.crashed = True
+    return reward
 
-    # shaping += obstacleRewardShaping(env)
-    # ────── HOVER-PENALTY  (NEW) ────────────────────────────────────────────
-    # 1. altitude above pad (positive z => higher)
-    altitude = abs(rel_pos[2])                      # |pz - pad_z|
+def hover_penalty(drone_alt, env):
+    reward = 0
 
     # 2. current step index (Gymnasium keeps _elapsed_steps)
     step = getattr(env, "_elapsed_steps", 0)
@@ -66,10 +40,101 @@ def safetyRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0,
     )
 
     hover_penalty = 0.0
-    if altitude > 1.0:                              # no penalty below 1 m
+    if drone_alt > 1.0:                              # no penalty below 1 m
         progress_ratio = step / max_episode_steps   # 0 → 1
-        hover_penalty  = -0.005 * altitude * (1.0 + 2.0 * progress_ratio)
-    shaping += hover_penalty
+        hover_penalty  = -0.005 * drone_alt * (1.0 + 2.0 * progress_ratio)
+    reward += hover_penalty
+    return reward
+
+def safetyRewardFunction(env, observation, action, tilt_cost=0.0, spin_cost=0.0, lidar_cost=0.0):
+    """
+    Computes the reward function based on the author's paper: Towards end-to-end control for UAV autonomous landing via deep reinforcement learning,
+
+    """
+    obs = env.drone.getDroneStateVector()
+    # px, py, pz = obs[0:3]  # Position
+    # vx, vy, vz = obs[10:13]  # Linear velocity
+    # roll, pitch, _yaw = obs[7:10]
+    # wx, wy, wz = obs[13:16]
+    # ax, ay, az, aw = (
+    #     action[0],
+    #     action[1],
+    #     action[2],
+    #     action[3],
+    # )  # Actions from the agent
+
+    drone_pos = obs[0:3]  # Position
+    drone_vel = obs[10:13]  # Linear velocity
+    roll, pitch, _yaw = obs[7:10]
+    wx, wy, wz = obs[13:16]
+    actions = (
+        action[0],
+        action[1],
+        action[2],
+        action[3],
+    )
+
+    rel_pos = np.array(drone_pos) - env.landing_pad_position
+    rel_vel = np.array(drone_vel) - np.array([0, 0, 0])
+    distance_penalty = np.linalg.norm(rel_pos)  # Distance penalty
+    velocity_penalty = np.linalg.norm(rel_vel)  # Velocity penalty
+    action_penalty = np.linalg.norm(actions)  # Action penalty
+    tilt_penalty = abs(roll) + abs(pitch)  # Weighted penalty for large tilt
+    spin_penalty = abs(wx) + abs(wy) + abs(wz)  # Weighted penalty for high spin
+
+    # Compute shaping reward
+    shaping = -100 * distance_penalty - 10 * velocity_penalty - 1 * action_penalty - 5 * tilt_penalty - 5 * spin_penalty
+
+    shaping += landing_reward(env, drone_pos, drone_vel, actions)
+    shaping += plane_penalty(env)
+    shaping += obstacleRewardShaping(env)
+    shaping += hover_penalty(abs(rel_pos[2]), env)
+
+    # Check if drone has landed safely
+    # contact_points = p.getContactPoints(env.drone.getDroneID(), env.landing_pad)
+
+    # if contact_points:
+    #     if abs(vx) <= 0.1 and abs(vy) <= 0.1 and abs(vz) <= 0.1:
+    #         print("Super soft landing")
+    #     elif abs(vx) < 0.3 and abs(vy) < 0.3 and abs(vz) < 0.3:
+    #         env.normal_landing_count += 1
+    #         if env.normal_landing_count % 25 == 0:
+    #             print("Landed")
+    #     # elif abs(vx) < 0.3 and abs(vy) < 0.3 and abs(vz) < 0.3 and env.normal_landing_count < 200:
+    #     #     env.normal_landing_count += 1
+    #     #     print("Landed")
+    #     # elif abs(vx) < 0.5 and abs(vy) < 0.5 and abs(vz) < 0.5:
+    #     #     print("Hard landing")
+    #     # else:
+    #     #     print("Crashed")
+    #     env.c = 10 * (1 - abs(ax)) + 10 * (1 - abs(ay)) + 10 * (1 - abs(az)) + 10 * (1 - abs(aw))  # Bonus for throttle tending to zero
+    #     shaping += env.c
+    #     env.landed = True
+
+    # contact_points_plane = p.getContactPoints(env.drone.getDroneID(), env.plane)
+    # if contact_points_plane:
+    #     shaping -= 100
+    #     env.crashed = True
+
+    # shaping += obstacleRewardShaping(env)
+    # # ────── HOVER-PENALTY  (NEW) ────────────────────────────────────────────
+    # # 1. altitude above pad (positive z => higher)
+    # altitude = abs(rel_pos[2])                      # |pz - pad_z|
+
+    # # 2. current step index (Gymnasium keeps _elapsed_steps)
+    # step = getattr(env, "_elapsed_steps", 0)
+
+    # # 3. max episode length
+    # max_episode_steps = (
+    #     getattr(env, "max_episode_steps",           
+    #             getattr(env.spec, "max_episode_steps", 500))
+    # )
+
+    # hover_penalty = 0.0
+    # if altitude > 1.0:                              # no penalty below 1 m
+    #     progress_ratio = step / max_episode_steps   # 0 → 1
+    #     hover_penalty  = -0.005 * altitude * (1.0 + 2.0 * progress_ratio)
+    # shaping += hover_penalty
     # ────────────────────────────────────────────────────────────────────────
 
     # Reward difference (temporal difference shaping)

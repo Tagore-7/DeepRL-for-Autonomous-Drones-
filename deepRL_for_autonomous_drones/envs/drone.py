@@ -14,7 +14,7 @@ class Drone(object):
         self,
         bullet_client,
         rng=None,
-        launch_pad_position=None,
+        landing_pad_position=None,
         gravity=-9.81,
         ctrl_freq=30,
         # pyb_client=p,
@@ -22,7 +22,7 @@ class Drone(object):
     ):
         self._p = bullet_client
         self.rng = rng
-        self.launch_pad_position = launch_pad_position
+        self.landing_pad_position = landing_pad_position
         self.gravity = gravity
         self.CTRL_FREQ = ctrl_freq
         # self.pyb_client = pyb_client
@@ -132,6 +132,9 @@ class Drone(object):
     def get_linear_velocity(self):
         return self.vel
 
+    def setLandingPadPosition(self, pos):
+        self.landing_pad_position = pos
+
     def setCurrentRawAction(self, action):
         """Sets the current raw action"""
         self.current_raw_action = action
@@ -226,7 +229,7 @@ class Drone(object):
             flags=self._p.LINK_FRAME,
         )
 
-    def loadDrone(self):
+    def loadDrone(self, start_pos: tuple[float, float, float] | None = None):
         """Loads the drone at a 7 meter fixed distance around the launch pad"""
         # ---- 7 meter distance in 3D sphere around launch pad ---#
         # # ---- Tilt from vertical or horizontal ----#
@@ -250,18 +253,34 @@ class Drone(object):
         # start_z = random.uniform(1, 3)
 
         # ---- 7 meter fixed horizontal distance, fixed 2 meter z spawn ----#
-        fixed_distance = 7.0
-        angle = self.rng.uniform(0, 2 * np.pi)
-        pad_x, pad_y, _pad_z = self.launch_pad_position
-        start_x = pad_x + fixed_distance * np.cos(angle)
-        start_y = pad_y + fixed_distance * np.sin(angle)
-        start_z = 2.0
+        # fixed_distance = 7.0
+        # angle = self.rng.uniform(0, 2 * np.pi)
+        # pad_x, pad_y, _pad_z = self.landing_pad_position
+        # start_x = pad_x + fixed_distance * np.cos(angle)
+        # start_y = pad_y + fixed_distance * np.sin(angle)
+        # start_z = 2.0
+
+        # drone = self._p.loadURDF(
+        #     str(files("deepRL_for_autonomous_drones") / "assets/cf2x.urdf"),
+        #     # str(files("deepRL_for_autonomous_drones") / "assets/cf21x_bullet.urdf"),
+        #     [start_x, start_y, start_z],
+        #     flags=self._p.URDF_USE_INERTIA_FROM_FILE,
+        # )
+        if start_pos is None:
+            fixed_distance = 7.0
+            angle = self.rng.uniform(0, 2 * np.pi)
+            pad_x, pad_y, _ = self.landing_pad_position
+            start_x = pad_x + fixed_distance * np.cos(angle)
+            start_y = pad_y + fixed_distance * np.sin(angle)
+            start_z = 2.0
+        else:
+            start_x, start_y, start_z = start_pos
 
         drone = self._p.loadURDF(
             str(files("deepRL_for_autonomous_drones") / "assets/cf2x.urdf"),
-            # str(files("deepRL_for_autonomous_drones") / "assets/cf21x_bullet.urdf"),
             [start_x, start_y, start_z],
             flags=self._p.URDF_USE_INERTIA_FROM_FILE,
+            # globalScaling=0.5,
         )
 
         self.drone = drone

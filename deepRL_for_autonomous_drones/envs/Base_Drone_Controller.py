@@ -70,13 +70,15 @@ class BaseDroneController(gym.Env):
         self.bullet_client_id = self._p._client
 
         self.max_episode_steps = 10000
+        self.normal_landing_count = 0
+        self.soft_landing_count = 0
 
         self.use_graphics = graphics
         # ---- Parameter arguments ----#
         self.visual_mode = self.args.visual_mode
-        self.launch_pad_position = self.args.launch_pad_position
+        self.landing_pad_position = self.args.launch_pad_position
         self.boundary_limits = self.args.boundary_limits
-        self.target_pos = self.launch_pad_position
+        self.target_pos = self.landing_pad_position
         self.distance_reward_weight = self.args.distance_reward_weight
         self.leg_contact_reward = self.args.leg_contact_reward
         self.gravity = self.args.gravity
@@ -91,6 +93,16 @@ class BaseDroneController(gym.Env):
         self._obstacles_active = False
         self._wind_effect_active = True
         self._trees_active = True
+
+        #------- Seed / layout_pool -------#
+        self.episode_idx = 0
+        self.train_layout_seeds = None  # filled once on first reset
+        self.eval_layout_seeds = None
+        self.layout_pool_size = (
+            self.args.layout_pool_size
+        )  # getattr(self.args, "layout_pool_size", 500)  # number of distinct layouts for training
+        self.eval_pool_size = self.args.eval_pool_size  # getattr(self.args, "eval_pool_size", 50)  # held-out layouts
+        self.use_layout_pool = True  # togglable
 
         if self.enable_curriculum_learning:
             self._obstacles_active = False
@@ -167,14 +179,18 @@ class BaseDroneController(gym.Env):
 
         self.drone = Drone(
             rng=self.rng,
-            launch_pad_position=self.launch_pad_position,
+            landing_pad_position=self.landing_pad_position,
             gravity=self.gravity,
             ctrl_freq=self.CTRL_FREQ,
             bullet_client=self._p,
         )
 
         # ---- Add observation components ----#
-        self.state_obs_length = 12 + 4 * self.drone.ACTION_BUFFER_SIZE
+        #------ landing_pad ------#
+        if self.args.use_dyn_landing_pad:
+            self.state_obs_length = 12 + 4 * self.drone.ACTION_BUFFER_SIZE + 3
+        else:
+            self.state_obs_length = 12 + 4 * self.drone.ACTION_BUFFER_SIZE
         self.rgb_obs_shape = (3, self.camera_height, self.camera_width)
 
         # ---- Action Space ----#
@@ -184,7 +200,8 @@ class BaseDroneController(gym.Env):
         self.observation_space = self._observationSpace()
 
         # ---- Reset the environment ----#
-        self._resetEnvironment()
+        #------- Seed / layout_pool -------#
+        # self._resetEnvironment()
 
         # ---- Update and store the drones kinematic information ----#
         self.drone.updateAndStoreKinematicInformation()
@@ -326,6 +343,33 @@ class BaseDroneController(gym.Env):
         # if not hasattr(self, "logger"):
         #     self._init_logger()
 
+        if seed is not None:
+            self._seed = seed
+            self.drone.rng = np.random.default_rng(seed)
+
+        #------- Seed / layout_pool -------#
+        if self.args.use_dyn_trees:
+            if self.use_layout_pool and self.train_layout_seeds is None:
+                all_draws = self.np_random.integers(0, 2**31 - 1, size=(self.layout_pool_size + self.eval_pool_size,), dtype=np.int64)
+                self.train_layout_seeds = all_draws[: self.layout_pool_size].tolist()
+                self.eval_layout_seeds = all_draws[self.layout_pool_size :].tolist()
+
+            if self.use_layout_pool:
+                mix_p = 0.10
+                if self.np_random.random() < mix_p:
+                    layout_seed = int(self.np_random.integers(0, 2**31 - 1))
+                else:
+                    layout_seed = int(self.train_layout_seeds[self.episode_idx % len(self.train_layout_seeds)])
+            else:
+                layout_seed = int(self.np_random.integers(0, 2**31 - 1))
+
+            self._current_layout_seed = layout_seed
+
+        #---- per-episode seeds for drone ----#
+        # random.seed(int(self.np_random.integers(0, 2**31 - 1)))
+        # drone_seed = int(self.np_random.integers(0, 2**31 - 1))
+        # self.drone.rng = np.random.default_rng(drone_seed)
+
         # ---- Before reset ----#
         self.before_reset()
 
@@ -333,7 +377,7 @@ class BaseDroneController(gym.Env):
         self._resetEnvironment()
 
         # ---- Update and store the drones kinematic information ----#
-        # self.drone.updateAndStoreKinematicInformation()
+        self.drone.updateAndStoreKinematicInformation()
 
         obs = self._getObservation()
         if self.observation_type != 1:
@@ -366,19 +410,41 @@ class BaseDroneController(gym.Env):
         self._p.setGravity(0, 0, self.gravity)
         self._p.setTimeStep(self.PYB_TIMESTEP)
 
+        #------ landing_pad ------#
+        self._add_origin_marker(height=2.0, radius=0.03)
+
         # ---- Load ground plane, drone, launch pad, and obstacles models ----#
         self.plane = self._p.loadURDF("plane.urdf")
+
+        #------ landing_pad ------#
+        if self.args.use_dyn_landing_pad:
+            self.landing_pad_position = self._sample_landing_pad_spawn()
+        self.landing_pad = self._p.loadURDF(
+            str(files("deepRL_for_autonomous_drones") / "assets/launch_pad.urdf"),
+            self.landing_pad_position,
+            useFixedBase=True,
+        )
+
+        self.launch_pad_position = self._sample_launch_pad_spawn()
         self.launch_pad = self._p.loadURDF(
             str(files("deepRL_for_autonomous_drones") / "assets/launch_pad.urdf"),
             self.launch_pad_position,
             useFixedBase=True,
         )
-        self.drone.loadDrone()
+
+        spawn_pos = [self.launch_pad_position[0], self.launch_pad_position[1], self.launch_pad_position[2] + 0.2]
+        self.drone.loadDrone(start_pos=spawn_pos)
         self.drone.resetDrone()
+        #------ landing_pad ------#
+        self.drone.setLandingPadPosition(self.landing_pad_position)
 
         # ---- Load obstacles if active ----#
         if self.add_obstacles:
-            self._generateStaticTrees()
+            #------- Seed / layout_pool -------#
+            if self.args.use_dyn_trees:
+                self._generateStaticTrees(self._current_layout_seed)
+            else:
+                self._generateStaticTrees()
 
         # ---- Debug local drone axes ----#
         if self.debug_axes and self.visual_mode.upper() == "GUI":
@@ -390,6 +456,67 @@ class BaseDroneController(gym.Env):
 
         if self.use_graphics:
             self._p.configureDebugVisualizer(self._p.COV_ENABLE_RENDERING, 1)
+            
+    #------ landing_pad ------#
+    def _sample_landing_pad_spawn(self):
+        """Sample a (x,y,0) inside a 1.0 m radius clearing centered at the origin."""
+        R = 1.0  # radius (meters)
+        # Uniform over disc: r = sqrt(u) * R, theta ~ U[0, 2pi]
+        u = float(self.np_random.random())
+        r = np.sqrt(u) * R
+        theta = float(self.np_random.uniform(0.0, 2.0 * np.pi))
+
+        x = float(r * np.cos(theta))
+        y = float(r * np.sin(theta))
+        z = 0.0
+        return (x, y, z)        
+
+    def _sample_launch_pad_spawn(self):
+        lo, hi = -10.0, 10.0
+
+        forest_r = 5
+        min_r = forest_r + 2.0  # 1m margin beyond trees
+        max_r = hi - 0.5  # keep a small buffer from the edge
+
+        # If min_r is already too big, clamp
+        if min_r >= max_r:
+            min_r = forest_r + 0.5
+            max_r = hi - 0.5
+
+        # for _ in range(200):
+        while True:
+            # Sample radius uniformly in annulus and angle uniformly in [0, 2π)
+            r = self.rng.uniform(min_r, max_r)
+            theta = self.rng.uniform(0.0, 2.0 * np.pi)
+            x = r * np.cos(theta)
+            y = r * np.sin(theta)
+            if not (lo <= x <= hi and lo <= y <= hi):
+                continue
+            return (float(x), float(y), 0.0)
+
+    def _add_origin_marker(self, height: float = 2.0, radius: float = 0.03):
+        """
+        Adds a transparent, non-colliding vertical marker at the world origin.
+        """
+        # Visual-only cylinder (no collision)
+        vis = self._p.createVisualShape(
+            shapeType=p.GEOM_CYLINDER,
+            radius=radius,
+            length=height,
+            rgbaColor=[1.0, 0.0, 0.0, 0.25],
+            visualFramePosition=[0, 0, height / 2.0],
+        )
+        self._origin_marker_id = self._p.createMultiBody(
+            baseMass=0.0,
+            baseCollisionShapeIndex=-1,
+            baseVisualShapeIndex=vis,
+            basePosition=[0.0, 0.0, 0.0],
+            baseOrientation=[0, 0, 0, 1],
+        )
+        try:
+            self._p.setCollisionFilterGroupMask(self._origin_marker_id, -1, collisionFilterGroup=0, collisionFilterMask=0)
+        except Exception:
+            pass
 
     def calculateWind(self):
         # ---- Calculate wind force if enabled ----#
@@ -485,6 +612,10 @@ class BaseDroneController(gym.Env):
         for i in range(self.drone.ACTION_BUFFER_SIZE):
             drone_state = np.hstack([drone_state, np.array(self.drone.action_buffer[i])])
 
+        #------ landing_pad ------#
+        if self.args.use_dyn_landing_pad:
+            drone_state = np.hstack([drone_state, np.array(self.landing_pad_position, dtype=np.float32)])
+
         assert not np.isnan(drone_state).any()
         if np.isnan(drone_state).any():
             print("[WARNING] Found NaNs in drone state observation")
@@ -549,7 +680,7 @@ class BaseDroneController(gym.Env):
             lidar_orientation,
             self.LIDAR_MAX_DISTANCE,
             self.OFFSET,
-            self.launch_pad,
+            self.landing_pad,
             self.plane,
             draw_debug_line=self.debug_axes,
         )
@@ -607,45 +738,139 @@ class BaseDroneController(gym.Env):
 
         return cost_functions[cost_function](self, observation)
 
-    def _generateStaticTrees(self):
+    # def _generateStaticTrees(self):
+    #     self.trees = []
+    #     if self._trees_active and self.add_obstacles:
+    #         tree_options = [
+    #             "assets/tree_one.urdf",
+    #             "assets/tree_two.urdf",
+    #             "assets/tree_three.urdf",
+    #             "assets/tree_four.urdf",
+    #             "assets/tree_five.urdf",
+    #         ]
+
+    #         # ---- Set a fixed random seed to ensure consistency ----#
+    #         rng = np.random.default_rng(seed=42)
+    #         # rng = np.random.default_rng(seed=self._seed)
+
+              # seed_for_trees = getattr(self, "_seed", None)
+              # if seed_for_trees is None:
+              #     return
+
+              # rng = np.random.default_rng(seed_for_trees if seed_for_trees is not None else 42)
+              # print(f"Tree seed: {seed_for_trees}")
+
+    #         num_trees = 50
+    #         min_distance_from_pad = 1.0
+    #         spawn_range = (-5, 5)
+
+    #         # ---- Generate fixed tree positions with some randomness ----#
+    #         if not hasattr(self, "fixed_tree_positions"):
+    #             self.fixed_tree_positions = []
+    #             attempts = 0
+    #             while len(self.fixed_tree_positions) < num_trees and attempts < 1000:
+    #                 x = rng.uniform(*spawn_range)
+    #                 y = rng.uniform(*spawn_range)
+
+    #                 # ---- Keep trees away from launch pad ----#
+    #                 if np.linalg.norm([x, y]) < min_distance_from_pad:
+    #                     attempts += 1
+    #                     continue
+
+    #                 self.fixed_tree_positions.append((x, y, 0))
+    #                 attempts += 1
+
+    #         # ---- Assign fixed tree types (random but consistent due to fixed seed) ----#
+    #         if not hasattr(self, "fixed_tree_types"):
+    #             self.fixed_tree_types = [tree_options[rng.integers(0, len(tree_options))] for _ in self.fixed_tree_positions]
+
+    #         self.trees = generateStaticTrees(self.fixed_tree_positions, self.fixed_tree_types, self._p)
+
+    #------- Seed / layout_pool -------#
+    def _generateStaticTrees(self, layout_seed: int = 42):
+        """
+        Spawns static trees reproducibly.
+        Keeps: self.trees, self.fixed_tree_positions, self.fixed_tree_types (URDF only)
+        """
         self.trees = []
-        if self._trees_active and self.add_obstacles:
-            tree_options = [
-                "assets/tree_one.urdf",
-                "assets/tree_two.urdf",
-                "assets/tree_three.urdf",
-                "assets/tree_four.urdf",
-                "assets/tree_five.urdf",
-            ]
+        if not getattr(self, "_trees_active", True) or not getattr(self, "add_obstacles", True):
+            return
 
-            # ---- Set a fixed random seed to ensure consistency ----#
+        #------- Seed / layout_pool -------#
+        if self.args.use_dyn_trees:
+            rng = np.random.default_rng(int(layout_seed))
+        else:
+            # seed_for_trees = getattr(self, "_seed", None)
+            # if seed_for_trees is None:
+            #     return
+
+            # rng = np.random.default_rng(seed_for_trees if seed_for_trees is not None else 42)
+            # # print(f"Tree seed: {seed_for_trees}")
+
             rng = np.random.default_rng(seed=42)
-            # rng = np.random.default_rng(seed=self._seed)
 
-            num_trees = 50
-            min_distance_from_pad = 1.0
-            spawn_range = (-5, 5)
+        min_x, max_x = -self.args.forest_span, self.args.forest_span
+        min_y, max_y = -self.args.forest_span, self.args.forest_span
 
-            # ---- Generate fixed tree positions with some randomness ----#
-            if not hasattr(self, "fixed_tree_positions"):
-                self.fixed_tree_positions = []
-                attempts = 0
-                while len(self.fixed_tree_positions) < num_trees and attempts < 1000:
-                    x = rng.uniform(*spawn_range)
-                    y = rng.uniform(*spawn_range)
+        trunk_radius_min = 0.15
+        trunk_radius_max = 0.45
 
-                    # ---- Keep trees away from launch pad ----#
-                    if np.linalg.norm([x, y]) < min_distance_from_pad:
-                        attempts += 1
-                        continue
+        # launch_xy = np.asarray(getattr(self, "launch_pad_position", (0.0, 0.0, 0.0))[:2], dtype=np.float32)
+        # landing_xy = np.asarray(getattr(self, "landing_pad_position", (0.0, 0.0, 0.0))[:2], dtype=np.float32)
+        launch_xy = self.launch_pad_position[:2]
+        landing_xy = self.landing_pad_position[:2]
 
-                    self.fixed_tree_positions.append((x, y, 0))
-                    attempts += 1
+        # ------------------- Rejection-sample positions -------------------- #
+        positions = []
+        attempts, max_attempts = 0, max(1000, 50 * self.args.num_trees)
 
-            # ---- Assign fixed tree types (random but consistent due to fixed seed) ----#
-            if not hasattr(self, "fixed_tree_types"):
-                self.fixed_tree_types = [tree_options[rng.integers(0, len(tree_options))] for _ in self.fixed_tree_positions]
+        def ok_xy(xy: np.ndarray) -> bool:
+            if np.linalg.norm(xy - launch_xy) < self.args.launch_pad_clearance:
+                return False
+            if np.linalg.norm(xy - landing_xy) < self.args.landing_pad_clearance:
+                return False
+            if not (min_x <= xy[0] <= max_x and min_y <= xy[1] <= max_y):
+                return False
+            if self.args.min_tree_spacing > 0.0 and positions:
+                d2_min = min(((xy[0] - px) ** 2 + (xy[1] - py) ** 2) for (px, py, _pz) in positions)
+                if d2_min < (self.args.min_tree_spacing**2):
+                    return False
+            return True
 
+        while len(positions) < self.args.num_trees and attempts < max_attempts:
+            x = rng.uniform(min_x, max_x)
+            y = rng.uniform(min_y, max_y)
+            if ok_xy(np.array([x, y], dtype=np.float32)):
+                positions.append((float(x), float(y), 0.0))
+            attempts += 1
+
+        self.fixed_tree_positions = positions
+
+        # -------------------------- Spawn trees ----------------------------
+        if self.args.use_parametric_trees:
+            specs = []
+            for _ in positions:
+                specs.append(
+                    {
+                        "trunk_r": float(rng.uniform(trunk_radius_min, trunk_radius_max)),
+                        "trunk_h": float(rng.uniform(self.args.tree_height_min, self.args.tree_height_max)),
+                        "trunk_rgba": [0.35, 0.20, 0.10, 1.0],
+                    }
+                )
+
+            self.trees = generateParametricTrees(self.fixed_tree_positions, specs, self._p)
+            self.fixed_tree_types = None
+
+        else:
+            tree_options = [
+                # "assets/tree_one.urdf",
+                # "assets/tree_two.urdf",
+                # "assets/tree_three.urdf",
+                # "assets/tree_four.urdf",
+                # "assets/tree_five.urdf",
+                "assets/tree_dynamic.urdf"
+            ]
+            self.fixed_tree_types = [tree_options[int(rng.integers(0, len(tree_options)))] for _ in positions]
             self.trees = generateStaticTrees(self.fixed_tree_positions, self.fixed_tree_types, self._p)
 
     def _loadStaticBlocks(self):

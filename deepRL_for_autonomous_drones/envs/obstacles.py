@@ -6,104 +6,67 @@ import pybullet as p
 import numpy as np
 
 
-def getFixedTreePositions():
-    fixed_tree_positions = [
-        # ---- Top left (-X, Y) Quadrant ----#
-        (-1, 1, 0),
-        (-3, 1, 0),
-        (-5, 1, 0),
-        (-2, 2, 0),
-        (-4, 2, 0),
-        (-1, 3, 0),
-        (-3, 3, 0),
-        (-5, 3, 0),
-        (-2, 4, 0),
-        (-4, 4, 0),
-        (-1, 5, 0),
-        (-3, 5, 0),
-        (-5, 5, 0),
-        (-2, 6, 0),
-        (-4, 6, 0),
-        # ---- Top right (X, Y) Quadrant ----#
-        (1, 1, 0),
-        (3, 1, 0),
-        (5, 1, 0),
-        (2, 2, 0),
-        (4, 2, 0),
-        (1, 3, 0),
-        (3, 3, 0),
-        (5, 3, 0),
-        (2, 4, 0),
-        (4, 4, 0),
-        (1, 5, 0),
-        (3, 5, 0),
-        (5, 5, 0),
-        (2, 6, 0),
-        (4, 6, 0),
-        # ---- Bottom right (X, -Y) Quadrant ----#
-        (1, -1, 0),
-        (3, -1, 0),
-        (5, -1, 0),
-        (2, -2, 0),
-        (4, -2, 0),
-        (1, -3, 0),
-        (3, -3, 0),
-        (5, -3, 0),
-        (2, -4, 0),
-        (4, -4, 0),
-        (1, -5, 0),
-        (3, -5, 0),
-        (5, -5, 0),
-        (2, -6, 0),
-        (4, -6, 0),
-        # ---- Bottom left (-X, -Y) Quadrant ----#
-        (-1, -1, 0),
-        (-3, -1, 0),
-        (-5, -1, 0),
-        (-2, -2, 0),
-        (-4, -2, 0),
-        (-1, -3, 0),
-        (-3, -3, 0),
-        (-5, -3, 0),
-        (-2, -4, 0),
-        (-4, -4, 0),
-        (-1, -5, 0),
-        (-3, -5, 0),
-        (-5, -5, 0),
-        (-2, -6, 0),
-        (-4, -6, 0),
-        # ---- Along X axis ----#
-        (-6, 0, 0),
-        (-4, 0, 0),
-        (-2, 0, 0),
-        (2, 0, 0),
-        (4, 0, 0),
-        (6, 0, 0),
-        # ---- Along Y axis ----#
-        (0, 6, 0),
-        (0, 4, 0),
-        (0, 2, 0),
-        (0, -2, 0),
-        (0, -4, 0),
-        (0, -6, 0),
-    ]
+# def generateStaticTrees(fixed_tree_positions, fixed_tree_types, pyb_client):
+#     trees = []
+#     for pos, tree_type in zip(fixed_tree_positions, fixed_tree_types):
+#         trees.append(
+#             pyb_client.loadURDF(
+#                 # pkg_resources.resource_filename("deepRL_for_autonomous_drones", tree_type),
+#                 str(files("deepRL_for_autonomous_drones") / tree_type),
+#                 basePosition=pos,
+#                 useFixedBase=True,
+#             )
+#         )
 
-    return fixed_tree_positions
+#     return trees
 
-
+#------- Seed / layout_pool -------#
 def generateStaticTrees(fixed_tree_positions, fixed_tree_types, pyb_client):
     trees = []
     for pos, tree_type in zip(fixed_tree_positions, fixed_tree_types):
+        random_uniform = random.uniform(0.5, 2.0)
         trees.append(
             pyb_client.loadURDF(
-                # pkg_resources.resource_filename("deepRL_for_autonomous_drones", tree_type),
                 str(files("deepRL_for_autonomous_drones") / tree_type),
                 basePosition=pos,
                 useFixedBase=True,
+                globalScaling=random_uniform,
             )
         )
 
     return trees
+
+
+#------- PARAMETRIC TREES ---------#
+# def generateParametricTrees(positions, specs, bc):
+#     """
+#     canopy_r <= 0 disables canopy; trunks only unless canopy_r > 0.
+#     Trunks are BOXES with square cross-section: width=depth=2*trunk_r, height=trunk_h.
+#     """
+#     uids = []
+#     for (x, y, z), s in zip(positions, specs):
+#         tr = float(s.get("trunk_r", 0.20))
+#         th = float(s.get("trunk_h", 5.0))
+
+#         trunk_rgba = s.get("trunk_rgba", [0.35, 0.20, 0.10, 1.0])
+
+#         # BOX trunk: half extents = [w/2, d/2, h/2] = [tr, tr, th/2]
+#         trunk_col = bc.createCollisionShape(p.GEOM_BOX, halfExtents=[tr, tr, th / 2.0])
+#         trunk_vis = bc.createVisualShape(p.GEOM_BOX, halfExtents=[tr, tr, th / 2.0], rgbaColor=trunk_rgba)
+
+#         uid = bc.createMultiBody(
+#             baseMass=0.0,
+#             baseCollisionShapeIndex=trunk_col,
+#             baseVisualShapeIndex=trunk_vis,
+#             basePosition=[x, y, z + th / 2.0],
+#             baseOrientation=[0, 0, 0, 1],
+#         )
+#         bc.changeDynamics(uid, -1, lateralFriction=0.9, restitution=0.0)
+
+#         # trees group=2, mask=4 (drone only)
+#         # bc.setCollisionFilterGroupMask(uid, -1, 2, 4)
+#         uids.append(uid)
+#     return uids
 
 
 def loadStaticBlocks():

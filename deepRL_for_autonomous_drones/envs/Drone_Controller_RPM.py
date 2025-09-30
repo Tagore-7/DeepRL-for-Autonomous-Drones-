@@ -71,6 +71,14 @@ class DroneControllerRPM(BaseDroneController):
             obs_lower_bound = np.hstack([obs_lower_bound, np.array(act_lo, np.float32)])
             obs_upper_bound = np.hstack([obs_upper_bound, np.array(act_hi, np.float32)])
 
+        #------ landing_pad ------#
+        if self.args.use_dyn_landing_pad:
+            EPS = 1e-6
+            pad_z_low, pad_z_high = -EPS, EPS
+
+            obs_lower_bound = np.hstack([obs_lower_bound, np.array([lo, lo, pad_z_low], dtype=np.float32)])
+            obs_upper_bound = np.hstack([obs_upper_bound, np.array([hi, hi, pad_z_high], dtype=np.float32)])
+
         # Drone state space (original drone observations + action buffer)
         state_space = Box(
             low=obs_lower_bound,
@@ -226,13 +234,14 @@ class DroneControllerRPM(BaseDroneController):
 
             self.drone.physics(clipped_action)
 
-            position, _ = self._p.getBasePositionAndOrientation(self.drone.getDroneID())
-            self._p.resetDebugVisualizerCamera(
-                cameraDistance=0.5,
-                cameraYaw=0,
-                cameraPitch=-45,
-                cameraTargetPosition=position,
-            )
+            if self.visual_mode.upper() == "GUI":
+                position, _ = self._p.getBasePositionAndOrientation(self.drone.getDroneID())
+                self._p.resetDebugVisualizerCamera(
+                    cameraDistance=0.5,
+                    cameraYaw=0,
+                    cameraPitch=-45,
+                    cameraTargetPosition=position,
+                )
 
             self._p.stepSimulation()
 
@@ -241,8 +250,8 @@ class DroneControllerRPM(BaseDroneController):
 
             self.drone.last_clipped_action = clipped_action
 
-            if self.use_graphics or self.render_mode == "human" or self.visual_mode.upper() == "GUI":
-                time.sleep(self.time_step)
+            # if self.use_graphics or self.render_mode == "human" or self.visual_mode.upper() == "GUI":
+            #     time.sleep(self.time_step)
 
     def step(self, action):
         """
@@ -295,6 +304,12 @@ class DroneControllerRPM(BaseDroneController):
         """Determines if the environment is truncated or not."""
         state = self.drone.getDroneStateVector()
 
+        # if self._p.getContactPoints(self.drone.getDroneID(), self.plane):
+        #     print("Crashed into plane")
+
+        # if (self.add_obstacles and any(self._p.getContactPoints(self.drone.getDroneID(), tree) for tree in self.trees)):
+        #     print("Crashed into tree")
+
         if (
             self.crashed
             or self._p.getContactPoints(self.drone.getDroneID(), self.plane)
@@ -306,6 +321,7 @@ class DroneControllerRPM(BaseDroneController):
                 or state[1] > self.boundary_limits
             )
         ):
+            # print("Crashed")
             self.crashed = True
             return True
 

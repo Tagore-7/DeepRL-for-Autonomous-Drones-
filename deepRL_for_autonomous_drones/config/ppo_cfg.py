@@ -50,7 +50,7 @@ class TrainCfg:
     buffer_size: int = 100000
     worker: str = "ShmemVectorEnv"     
     training_num: int = 256
-    testing_num: int = 2
+    testing_num: int = 10
 
     # ───────────────────────────── misc params ──────────────────────────────
     batch_size: int = 256
@@ -64,8 +64,9 @@ class TrainCfg:
     # ──────────────────────────── logger params ─────────────────────────────
     logdir: str = "benchmark_results"
     project: str = "fast-safe-rl"
-    group: Optional[str] = None
-    name: Optional[str] = None
+    group: Optional[str] = "changes"
+    # name: Optional[str] = "add_seeding_trees_linear_decay_lr_and_clip"
+    name: Optional[str] = "add_ran_pad_dyn_trees_continued_2e5_lr"
     prefix: Optional[str] = "ppo"
     suffix: Optional[str] = ""
 
@@ -75,9 +76,17 @@ class DroneLandingCfg(TrainCfg):
     """Overrides tuned for the drone‑landing task."""
 
     epoch: int = 1500
-    step_per_epoch: int = 14000
+    # step_per_epoch: int = 14000
     repeat_per_collect: int = 7
     lr: float = 2.5e-5
-    target_kl: float = 0.06
+    # lr: float = 5e-5
+    # lr: float = 1e-4
+    # target_kl: float = 0.06
     vf_coef: float = 0.8
     cost_limit: float = 0
+
+    training_num: int = 256
+    step_per_epoch: int = 512
+    target_kl: float = 0.06
+    batch_size: int = 256
+    # batch_size: int = 512
