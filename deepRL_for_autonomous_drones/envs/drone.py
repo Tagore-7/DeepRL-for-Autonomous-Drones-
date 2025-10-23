@@ -17,7 +17,6 @@ class Drone(object):
         landing_pad_position=None,
         gravity=-9.81,
         ctrl_freq=30,
-        # pyb_client=p,
         normalized_rl_action_space=True,
     ):
         self._p = bullet_client
@@ -48,7 +47,6 @@ class Drone(object):
             self.DW_COEFF_2,
             self.DW_COEFF_3,
         ) = parseURDFParameters("assets/cf2x.urdf")
-        # ) = parseURDFParameters("assets/cf21x_bullet.urdf")
 
         # ---- Compute constants ----#
         self.G = -self.gravity * self.MASS
@@ -212,16 +210,6 @@ class Drone(object):
                 flags=self._p.LINK_FRAME,
             )
 
-        # This is for the rotor visuals
-        # for i in range(4):
-        #     self._p.setJointMotorControl2(
-        #         self.drone,
-        #         jointIndex=i,
-        #         controlMode=self._p.VELOCITY_CONTROL,
-        #         targetVelocity=rpm[i],
-        #         force=0.010,
-        #     )
-
         self._p.applyExternalTorque(
             self.drone,
             4,
@@ -231,41 +219,6 @@ class Drone(object):
 
     def loadDrone(self, start_pos: tuple[float, float, float] | None = None):
         """Loads the drone at a 7 meter fixed distance around the launch pad"""
-        # ---- 7 meter distance in 3D sphere around launch pad ---#
-        # # ---- Tilt from vertical or horizontal ----#
-        # phi = self.rng.uniform(0, np.pi / 2)
-        # theta = self.rng.uniform(0, 2 * np.pi)
-
-        # # ---- Fixed radius of 7 meters ----#
-        # # ---- Convert spherical to cartesian coordinates ----#
-        # radius = 7.0
-        # x_off = radius * math.sin(phi) * math.cos(theta)
-        # y_off = radius * math.sin(phi) * math.sin(theta)
-        # z_off = radius * math.cos(phi)
-
-        # # ---- Pad center ----#
-        # pad_x, pad_y, pad_z = self.launch_pad_position
-
-        # # ---- Shift drone spawn by offsets ----#
-        # start_x = pad_x + x_off
-        # start_y = pad_y + y_off
-        # # start_z = pad_z + z_off
-        # start_z = random.uniform(1, 3)
-
-        # ---- 7 meter fixed horizontal distance, fixed 2 meter z spawn ----#
-        # fixed_distance = 7.0
-        # angle = self.rng.uniform(0, 2 * np.pi)
-        # pad_x, pad_y, _pad_z = self.landing_pad_position
-        # start_x = pad_x + fixed_distance * np.cos(angle)
-        # start_y = pad_y + fixed_distance * np.sin(angle)
-        # start_z = 2.0
-
-        # drone = self._p.loadURDF(
-        #     str(files("deepRL_for_autonomous_drones") / "assets/cf2x.urdf"),
-        #     # str(files("deepRL_for_autonomous_drones") / "assets/cf21x_bullet.urdf"),
-        #     [start_x, start_y, start_z],
-        #     flags=self._p.URDF_USE_INERTIA_FROM_FILE,
-        # )
         if start_pos is None:
             fixed_distance = 7.0
             angle = self.rng.uniform(0, 2 * np.pi)
@@ -339,27 +292,6 @@ class Drone(object):
         )
         return state.reshape(
             20,
-        )
-
-    def _dragWind(self):
-        """Simulates the effect of wind on the drone."""
-        # _, orientation = p.getBasePositionAndOrientation(self.drone)
-        # linear_vel, _ = p.getBaseVelocity(self.drone)
-        # base_rot = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
-        # relative_velocity = np.array(linear_vel) - self.wind_force
-
-        state = self.getDroneStateVector()
-        base_rot = np.array(self._p.getMatrixFromQuaternion(state[3:7])).reshape(3, 3)
-        # relative_velocity = np.array(state[10:13]) - self.wind_force
-        relative_velocity = np.array(state[10:13])
-
-        drag = np.dot(base_rot.T, self.DRAG_COEFF * np.array(relative_velocity))
-        self._p.applyExternalForce(
-            self.getDroneID(),
-            4,
-            forceObj=drag,
-            posObj=[0, 0, 0],
-            flags=self._p.LINK_FRAME,
         )
 
     def _groundEffect(self, rpm):

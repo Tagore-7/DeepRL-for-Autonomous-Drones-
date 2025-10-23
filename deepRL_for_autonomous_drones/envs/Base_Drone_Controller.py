@@ -7,11 +7,9 @@ import ctypes
 import gymnasium as gym
 import numpy as np
 
-# import pybullet as p
 import pybullet_data
 import pkgutil
 
-# import pkg_resources
 import logging
 from pybullet_utils import bullet_client
 from importlib.resources import files
@@ -19,7 +17,7 @@ from deepRL_for_autonomous_drones.utils.Lidar import Lidar
 from deepRL_for_autonomous_drones.envs.reward_functions import reward_functions
 from deepRL_for_autonomous_drones.envs.cost_functions import cost_functions
 from deepRL_for_autonomous_drones.envs.drone import Drone
-from deepRL_for_autonomous_drones.envs.obstacles import generateStaticTrees, loadMovingBlocks, loadStaticBlocks, loadTorusObstacles
+from deepRL_for_autonomous_drones.envs.obstacles import generateStaticTrees
 from deepRL_for_autonomous_drones.envs.env_cfg import EnvCfg
 
 
@@ -94,23 +92,17 @@ class BaseDroneController(gym.Env):
         self._wind_effect_active = True
         self._trees_active = True
 
-        #------- Seed / layout_pool -------#
+        # ------- Seed / layout_pool -------#
         self.episode_idx = 0
         self.train_layout_seeds = None  # filled once on first reset
         self.eval_layout_seeds = None
-        self.layout_pool_size = (
-            self.args.layout_pool_size
-        )  # getattr(self.args, "layout_pool_size", 500)  # number of distinct layouts for training
-        self.eval_pool_size = self.args.eval_pool_size  # getattr(self.args, "eval_pool_size", 50)  # held-out layouts
-        self.use_layout_pool = True  # togglable
+        self.layout_pool_size = self.args.layout_pool_size  # number of distinct layouts for training
+        self.eval_pool_size = self.args.eval_pool_size  # held-out layouts
+        self.use_layout_pool = self.args.use_layout_pool
 
         if self.enable_curriculum_learning:
             self._obstacles_active = False
             self._wind_effect_active = False
-            #     self._static_blocks_active = False
-            #     self._donut_obstacles_active = False
-            #     self._moving_blocks_active = False
-            #     self._wind_effect_active = False
             self._trees_active = False
 
         # wind force
@@ -147,7 +139,6 @@ class BaseDroneController(gym.Env):
         self.WIND_DELAY_STEPS = 20
 
         # ---- LIDAR settings ----#
-        # self.LIDAR_NUM_RAYS = 36  # Number of LIDAR rays
         self.LIDAR_NUM_RAYS = 144  # Number of LIDAR rays
         self.LIDAR_MAX_DISTANCE = 10  # Max distance in meters a LIDAR ray can detect obstacles
         self.LIDAR_LINK_IDX = 4  # Index of the link from which the rays are emitted
@@ -186,7 +177,8 @@ class BaseDroneController(gym.Env):
         )
 
         # ---- Add observation components ----#
-        #------ landing_pad ------#
+
+        # ------ landing_pad ------#
         if self.args.use_dyn_landing_pad:
             self.state_obs_length = 12 + 4 * self.drone.ACTION_BUFFER_SIZE + 3
         else:
@@ -200,7 +192,6 @@ class BaseDroneController(gym.Env):
         self.observation_space = self._observationSpace()
 
         # ---- Reset the environment ----#
-        #------- Seed / layout_pool -------#
         # self._resetEnvironment()
 
         # ---- Update and store the drones kinematic information ----#
@@ -222,37 +213,6 @@ class BaseDroneController(gym.Env):
         self.logger.addHandler(fh)
 
         self.logger.propagate = False  # prevents double logging
-
-    # def _setup_client_and_physics(self, graphics=False) -> bullet_client.BulletClient:
-    #     with RedirectStream(sys.stdout):
-    #         if graphics or self.use_graphics or self.render_mode == "human" or self.args.visual_mode.upper() == "GUI":
-    #             bc = bullet_client.BulletClient(connection_mode=p.GUI)
-    #             bc.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
-    #             bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
-    #         else:
-    #             bc = bullet_client.BulletClient(connection_mode=p.DIRECT)
-    #             bc.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
-    #             bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
-    #     try:
-    #         if os.environ["PYBULLET_EGL"]:
-    #             con_mode = bc.getConnectionInfo()["connectionMethod"]
-    #             if con_mode == bc.DIRECT:
-    #                 egl = pkgutil.get_loader("eglRenderer")
-    #                 if egl:
-    #                     bc.loadPlugin(egl.get_filename(), "_eglRendererPlugin")
-    #                     print("LOADED EGL...")
-    #                 else:
-    #                     bc.loadPlugin("eglRendererPlugin")
-    #     except KeyError:
-    #         # print("Note: could not load egl...")
-    #         pass
-
-    #     bc.setAdditionalSearchPath(pybullet_data.getDataPath())
-    #     # disable GUI debug visuals
-    #     # bc.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
-    #     # bc.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
-
-    #     return bc
 
     def _setup_client_and_physics(self, graphics=False):
         with RedirectStream(sys.stdout):
@@ -347,7 +307,7 @@ class BaseDroneController(gym.Env):
             self._seed = seed
             self.drone.rng = np.random.default_rng(seed)
 
-        #------- Seed / layout_pool -------#
+        # ------- Seed / layout_pool -------#
         if self.args.use_dyn_trees:
             if self.use_layout_pool and self.train_layout_seeds is None:
                 all_draws = self.np_random.integers(0, 2**31 - 1, size=(self.layout_pool_size + self.eval_pool_size,), dtype=np.int64)
@@ -364,11 +324,6 @@ class BaseDroneController(gym.Env):
                 layout_seed = int(self.np_random.integers(0, 2**31 - 1))
 
             self._current_layout_seed = layout_seed
-
-        #---- per-episode seeds for drone ----#
-        # random.seed(int(self.np_random.integers(0, 2**31 - 1)))
-        # drone_seed = int(self.np_random.integers(0, 2**31 - 1))
-        # self.drone.rng = np.random.default_rng(drone_seed)
 
         # ---- Before reset ----#
         self.before_reset()
@@ -410,13 +365,13 @@ class BaseDroneController(gym.Env):
         self._p.setGravity(0, 0, self.gravity)
         self._p.setTimeStep(self.PYB_TIMESTEP)
 
-        #------ landing_pad ------#
+        # ------ landing_pad ------#
         self._add_origin_marker(height=2.0, radius=0.03)
 
         # ---- Load ground plane, drone, launch pad, and obstacles models ----#
         self.plane = self._p.loadURDF("plane.urdf")
 
-        #------ landing_pad ------#
+        # ------ landing_pad ------#
         if self.args.use_dyn_landing_pad:
             self.landing_pad_position = self._sample_landing_pad_spawn()
         self.landing_pad = self._p.loadURDF(
@@ -435,12 +390,11 @@ class BaseDroneController(gym.Env):
         spawn_pos = [self.launch_pad_position[0], self.launch_pad_position[1], self.launch_pad_position[2] + 0.2]
         self.drone.loadDrone(start_pos=spawn_pos)
         self.drone.resetDrone()
-        #------ landing_pad ------#
+        # ------ landing_pad ------#
         self.drone.setLandingPadPosition(self.landing_pad_position)
 
         # ---- Load obstacles if active ----#
         if self.add_obstacles:
-            #------- Seed / layout_pool -------#
             if self.args.use_dyn_trees:
                 self._generateStaticTrees(self._current_layout_seed)
             else:
@@ -451,13 +405,12 @@ class BaseDroneController(gym.Env):
             self._showDroneLocalAxes()
 
         if self.enable_wind:
-            # self.calculateWind() # Old wind model
             self._initWind()
 
         if self.use_graphics:
             self._p.configureDebugVisualizer(self._p.COV_ENABLE_RENDERING, 1)
-            
-    #------ landing_pad ------#
+
+    # ------ landing_pad ------#
     def _sample_landing_pad_spawn(self):
         """Sample a (x,y,0) inside a 1.0 m radius clearing centered at the origin."""
         R = 1.0  # radius (meters)
@@ -469,7 +422,7 @@ class BaseDroneController(gym.Env):
         x = float(r * np.cos(theta))
         y = float(r * np.sin(theta))
         z = 0.0
-        return (x, y, z)        
+        return (x, y, z)
 
     def _sample_launch_pad_spawn(self):
         lo, hi = -10.0, 10.0
@@ -518,29 +471,9 @@ class BaseDroneController(gym.Env):
         except Exception:
             pass
 
-    def calculateWind(self):
-        # ---- Calculate wind force if enabled ----#
-        if self.enable_wind and self._wind_effect_active:
-            # self.p_e = self.rng.uniform(0, 1)
-            # self.episode_wind_active = self.p_e < 0.5
-
-            # ---- For testing wind at various percentages ----#
-            self.episode_wind_active = self.wind_force_scale > 0.0
-            # self.episode_wind_active = True
-            if self.episode_wind_active:
-                # f_magnitude = self.rng.uniform(0, 0.005)
-                f_magnitude = 0.5  # fixed max force
-                f_direction = self.rng.uniform(-1, 1, 3)
-                f_direction[2] = 0
-                f_direction /= np.linalg.norm(f_direction[:2])
-                self.wind_force = self.wind_force_scale * f_magnitude * f_direction
-            else:
-                self.wind_force = np.array([0.0, 0.0, 0.0])
-
     def setWindLevel(self, level: str):
         self.current_wind_level = level
 
-    ###################### NEW2 ####################################
     def _initWind(self):
         self.episode_wind_active = True
         # self.p_e = self.rng.uniform(0, 1)
@@ -612,7 +545,7 @@ class BaseDroneController(gym.Env):
         for i in range(self.drone.ACTION_BUFFER_SIZE):
             drone_state = np.hstack([drone_state, np.array(self.drone.action_buffer[i])])
 
-        #------ landing_pad ------#
+        # ------ landing_pad ------#
         if self.args.use_dyn_landing_pad:
             drone_state = np.hstack([drone_state, np.array(self.landing_pad_position, dtype=np.float32)])
 
@@ -636,7 +569,6 @@ class BaseDroneController(gym.Env):
                 "lidar": lidar_state.astype(np.float32),
             }
         elif self.observation_type == 3:
-            # rgb_obs = self._getCameraImage()
             rgb_obs = self._getCameraImage() / 255.0
 
             return {
@@ -653,7 +585,6 @@ class BaseDroneController(gym.Env):
             normalized_lidar_dist = lidar_distances / self.LIDAR_MAX_DISTANCE
             lidar_state = normalized_lidar_dist
 
-            # rgb_obs = self._getCameraImage()
             rgb_obs = self._getCameraImage() / 255.0
 
             return {
@@ -738,55 +669,6 @@ class BaseDroneController(gym.Env):
 
         return cost_functions[cost_function](self, observation)
 
-    # def _generateStaticTrees(self):
-    #     self.trees = []
-    #     if self._trees_active and self.add_obstacles:
-    #         tree_options = [
-    #             "assets/tree_one.urdf",
-    #             "assets/tree_two.urdf",
-    #             "assets/tree_three.urdf",
-    #             "assets/tree_four.urdf",
-    #             "assets/tree_five.urdf",
-    #         ]
-
-    #         # ---- Set a fixed random seed to ensure consistency ----#
-    #         rng = np.random.default_rng(seed=42)
-    #         # rng = np.random.default_rng(seed=self._seed)
-
-              # seed_for_trees = getattr(self, "_seed", None)
-              # if seed_for_trees is None:
-              #     return
-
-              # rng = np.random.default_rng(seed_for_trees if seed_for_trees is not None else 42)
-              # print(f"Tree seed: {seed_for_trees}")
-
-    #         num_trees = 50
-    #         min_distance_from_pad = 1.0
-    #         spawn_range = (-5, 5)
-
-    #         # ---- Generate fixed tree positions with some randomness ----#
-    #         if not hasattr(self, "fixed_tree_positions"):
-    #             self.fixed_tree_positions = []
-    #             attempts = 0
-    #             while len(self.fixed_tree_positions) < num_trees and attempts < 1000:
-    #                 x = rng.uniform(*spawn_range)
-    #                 y = rng.uniform(*spawn_range)
-
-    #                 # ---- Keep trees away from launch pad ----#
-    #                 if np.linalg.norm([x, y]) < min_distance_from_pad:
-    #                     attempts += 1
-    #                     continue
-
-    #                 self.fixed_tree_positions.append((x, y, 0))
-    #                 attempts += 1
-
-    #         # ---- Assign fixed tree types (random but consistent due to fixed seed) ----#
-    #         if not hasattr(self, "fixed_tree_types"):
-    #             self.fixed_tree_types = [tree_options[rng.integers(0, len(tree_options))] for _ in self.fixed_tree_positions]
-
-    #         self.trees = generateStaticTrees(self.fixed_tree_positions, self.fixed_tree_types, self._p)
-
-    #------- Seed / layout_pool -------#
     def _generateStaticTrees(self, layout_seed: int = 42):
         """
         Spawns static trees reproducibly.
@@ -796,27 +678,14 @@ class BaseDroneController(gym.Env):
         if not getattr(self, "_trees_active", True) or not getattr(self, "add_obstacles", True):
             return
 
-        #------- Seed / layout_pool -------#
         if self.args.use_dyn_trees:
             rng = np.random.default_rng(int(layout_seed))
         else:
-            # seed_for_trees = getattr(self, "_seed", None)
-            # if seed_for_trees is None:
-            #     return
-
-            # rng = np.random.default_rng(seed_for_trees if seed_for_trees is not None else 42)
-            # # print(f"Tree seed: {seed_for_trees}")
-
             rng = np.random.default_rng(seed=42)
 
         min_x, max_x = -self.args.forest_span, self.args.forest_span
         min_y, max_y = -self.args.forest_span, self.args.forest_span
 
-        trunk_radius_min = 0.15
-        trunk_radius_max = 0.45
-
-        # launch_xy = np.asarray(getattr(self, "launch_pad_position", (0.0, 0.0, 0.0))[:2], dtype=np.float32)
-        # landing_xy = np.asarray(getattr(self, "landing_pad_position", (0.0, 0.0, 0.0))[:2], dtype=np.float32)
         launch_xy = self.launch_pad_position[:2]
         landing_xy = self.landing_pad_position[:2]
 
@@ -847,77 +716,19 @@ class BaseDroneController(gym.Env):
         self.fixed_tree_positions = positions
 
         # -------------------------- Spawn trees ----------------------------
-        if self.args.use_parametric_trees:
-            specs = []
-            for _ in positions:
-                specs.append(
-                    {
-                        "trunk_r": float(rng.uniform(trunk_radius_min, trunk_radius_max)),
-                        "trunk_h": float(rng.uniform(self.args.tree_height_min, self.args.tree_height_max)),
-                        "trunk_rgba": [0.35, 0.20, 0.10, 1.0],
-                    }
-                )
-
-            self.trees = generateParametricTrees(self.fixed_tree_positions, specs, self._p)
-            self.fixed_tree_types = None
-
-        else:
-            tree_options = [
-                # "assets/tree_one.urdf",
-                # "assets/tree_two.urdf",
-                # "assets/tree_three.urdf",
-                # "assets/tree_four.urdf",
-                # "assets/tree_five.urdf",
-                "assets/tree_dynamic.urdf"
-            ]
-            self.fixed_tree_types = [tree_options[int(rng.integers(0, len(tree_options)))] for _ in positions]
-            self.trees = generateStaticTrees(self.fixed_tree_positions, self.fixed_tree_types, self._p)
-
-    def _loadStaticBlocks(self):
-        self.static_blocks = []
-        if self._static_blocks_active and self.add_obstacles:
-            self.static_blocks = loadStaticBlocks()
-
-    def _loadMovingBlocks(self):
-        self.first_moving_block = None
-        self.second_moving_block = None
-        if self._moving_blocks_active and self.add_obstacles:
-            self.first_moving_block, self.second_moving_block = loadMovingBlocks()
-
-    def _loadTorusObstacles(self):
-        self.obstacles = []
-        if self._donut_obstacles_active and self.add_obstacles:
-            self.obstacles = loadTorusObstacles()
-
-    def _updateMovingBlocks(self):
-        """
-        Update the positions of the moving blocks so that they oscillate along a predefined axis.
-        The first moving block oscillates along the x-axis, and the second along the y-axis.
-        Their movement is determined by a sine function based on simulation time.
-        """
-        if self.first_moving_block is None or self.second_moving_block is None:
-            return
-
-        # Define amplitude and angular frequency.
-        amplitude = 3.0  # maximum displacement in meters
-        omega = 0.2  # angular frequency in rad/s
-
-        # Compute an approximate simulation time from the step counter.
-        current_time = self.step_counter * self.CTRL_TIMESTEP
-
-        # For the first moving block: oscillate along x-axis.
-        new_x = amplitude * np.sin(omega * current_time)
-        new_pos1 = [new_x, 0, 1]  # keep y=0 and fixed z = 1
-        self._p.resetBasePositionAndOrientation(self.first_moving_block, new_pos1, self._p.getQuaternionFromEuler([0, 0, 0]))
-
-        # For the second moving block: oscillate along y-axis at double speed.
-        new_y = amplitude * np.sin(2 * omega * current_time)
-        new_pos2 = [0, new_y, 1]  # keep x=0 and fixed z = 1
-        self._p.resetBasePositionAndOrientation(self.second_moving_block, new_pos2, self._p.getQuaternionFromEuler([0, 0, 0]))
+        tree_options = [
+            # "assets/tree_one.urdf",
+            # "assets/tree_two.urdf",
+            # "assets/tree_three.urdf",
+            # "assets/tree_four.urdf",
+            # "assets/tree_five.urdf",
+            "assets/tree_dynamic.urdf"
+        ]
+        self.fixed_tree_types = [tree_options[int(rng.integers(0, len(tree_options)))] for _ in positions]
+        self.trees = generateStaticTrees(self.fixed_tree_positions, self.fixed_tree_types, self._p)
 
     def setWindEffects(self, flag: bool):
         """Enable or diable wind effects."""
-        # print(f"Wind effect set to: {flag}")
         self._wind_effect_active = flag
 
     def setStaticBlocks(self, flag: bool):

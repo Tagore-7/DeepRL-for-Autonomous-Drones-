@@ -18,28 +18,22 @@ class EnvCfg:
     cost_function: int = 2
     debug_axes: bool = False
     add_obstacles: bool = True
-    enable_wind: bool = True
+    enable_wind: bool = False
     enable_curriculum_learning: bool = False
     observation_type: int = 2
 
     use_dyn_landing_pad: bool = True
     use_dyn_trees: bool = True
 
-    #------- Seed / layout_pool -------#
-    # layout_pool_size: int = 500
-    # eval_pool_size: int = 50
-
-    # layout_pool_size: int = 128
+    # ------- Seed / layout_pool -------#
+    use_layout_pool: bool = True
     layout_pool_size: int = 64
     eval_pool_size: int = 20
 
-    #------- Tree configs -------#
+    # ------- Tree configs -------#
     num_trees: int = 50
     forest_span: float = 5.0  # Note: this sets the forest as an NxN (ie, if the value is 5.0, it'll go from -5.0 to 5.0 in both X and Y)
     pad_clear_margin: float = 0.15  # For how close the trees can come to the landing pad
-    use_parametric_trees: bool = False
     min_tree_spacing: float = 0.0
     launch_pad_clearance: float = 1.2
     landing_pad_clearance: float = 1.2
-    tree_height_min: float = 3.5  # If using paramaetric trees and not URDF
-    tree_height_max: float = 7.0
