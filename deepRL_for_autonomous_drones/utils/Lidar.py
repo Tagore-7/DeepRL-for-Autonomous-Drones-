@@ -41,9 +41,12 @@ class Lidar:
         ray_orientation,
         ray_length,
         offset,
+        landing_pad_id,
         launch_pad_id,
         plane,
         draw_debug_line=False,
+        pyb_client=None,
+        drone_id=None,
     ):
         """
         Casts rays in a full 3D spherical pattern and returns the ray test results
@@ -67,11 +70,15 @@ class Lidar:
             Results of the ray casting
         """
 
+        if pyb_client is None:
+            pyb_client = p
+
         # ---- Compute rotation matrix to transform from sensor local coordinates to world coordinates ----#
         R = self.rotation_matrix(ray_orientation[0], ray_orientation[1], ray_orientation[2])
 
         # ---- Vertical range for the scan (-90 degress to 90 degrees elevation)
         elev_min = -math.pi / 2
+        # elev_min = 0
         elev_max = math.pi / 2
 
         ray_from = []
@@ -80,6 +87,10 @@ class Lidar:
         # ---- Number of rays. Becomes 36 rays in 3D space ----#
         num_horizontal = 12
         num_vertical = 12
+        # num_horizontal = 32
+        # num_vertical = 2
+        # num_horizontal = 10
+        # num_vertical = 10
 
         # ---- Generate 3D ray directions ----#
         for i in range(num_vertical):
@@ -109,12 +120,12 @@ class Lidar:
                 ray_to.append(end_pos)
 
         # ---- Perform ray casting ----#
-        raw_hit_results = p.rayTestBatch(ray_from, ray_to, numThreads=0)
+        raw_hit_results = pyb_client.rayTestBatch(ray_from, ray_to, numThreads=0)
 
         hit_results = []
         for idx, res in enumerate(raw_hit_results):
             # ---- treat pad_id and plane_id as “no hits” so the drone can approach. ----#
-            if (res[0] != launch_pad_id) and (res[0] != plane):
+            if (res[0] != launch_pad_id) and (res[0] != plane) and (res[0] != landing_pad_id):
                 hit_results.append(res)
             else:
                 hit_results.append((-1, 0, 1.0, ray_to[idx]))
@@ -126,23 +137,23 @@ class Lidar:
                 for idx, res in enumerate(hit_results):
                     if res[0] != -1:
                         # ---- Hit detected: draw ray from sensor to hit point (red) ----#
-                        debug_id = p.addUserDebugLine(ray_from[idx], res[3], lineColorRGB=[1, 0, 0])
+                        debug_id = pyb_client.addUserDebugLine(ray_from[idx], res[3], lineColorRGB=[1, 0, 0])
                     else:
                         # ---- No hit: draw ray from sensor to end point (green) ----#
-                        debug_id = p.addUserDebugLine(ray_from[idx], ray_to[idx], lineColorRGB=[0, 1, 0])
+                        debug_id = pyb_client.addUserDebugLine(ray_from[idx], ray_to[idx], lineColorRGB=[0, 1, 0])
                     self.replace_item_uniqueIds.append(debug_id)
             else:
                 # ---- Update existing debug lines ----#
                 for idx, res in enumerate(hit_results):
                     if res[0] != -1:
-                        p.addUserDebugLine(
+                        pyb_client.addUserDebugLine(
                             ray_from[idx],
                             res[3],
                             lineColorRGB=[1, 0, 0],
                             replaceItemUniqueId=self.replace_item_uniqueIds[idx],
                         )
                     else:
-                        p.addUserDebugLine(
+                        pyb_client.addUserDebugLine(
                             ray_from[idx],
                             ray_to[idx],
                             lineColorRGB=[0, 1, 0],

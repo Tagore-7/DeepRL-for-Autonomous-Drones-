@@ -114,9 +114,9 @@ class BaseDroneController(gym.Env):
         self.WIND_LEVELS = {
             "none": 0.0,
             "light_breeze": 2.24,  # 5 mph
-            "light_wind": 4.47,  # 10 mph
-            "medium_wind": 8.94,  # 20 mph
-            "high_wind": 17.88,  # 40 mph
+            "light": 4.47,  # 10 mph
+            "medium": 8.94,  # 20 mph
+            "high": 17.88,  # 40 mph
         }
 
         # ---- Constants ----#
@@ -134,7 +134,7 @@ class BaseDroneController(gym.Env):
         self.PYB_STEPS_PER_CTRL = int(self.PYB_FREQ / self.CTRL_FREQ)
         self.CTRL_TIMESTEP = 1.0 / self.CTRL_FREQ
         self.PYB_TIMESTEP = 1.0 / self.PYB_FREQ
-        self.EPISODE_LEN_SEC = 15
+        self.EPISODE_LEN_SEC = 20
         self.CTRL_STEPS = self.EPISODE_LEN_SEC * self.CTRL_FREQ
         self.WIND_DELAY_STEPS = 20
 
@@ -265,6 +265,9 @@ class BaseDroneController(gym.Env):
         self.pyb_step_counter = 0
         self.ctrl_step_counter = 0
 
+        self.action_err_sum = 0.0
+        self.action_err_steps = 0
+
         # ---- Action sent by controller, possibly normalized and unclipped ----#
         self.drone.setCurrentRawAction(None)
         # ---- Current_raw_action unnormalized if it was normalized ----#
@@ -353,6 +356,7 @@ class BaseDroneController(gym.Env):
         """
         # ---- Initialize/reset counters and zero-valued variables ----#
         self.landed = False
+        self.hard_landing = False
         self.crashed = False
         self.step_counter = 0  # Step counter for termination condition
         self.c = 0.0  # Hyperparameter indicating landing state bonus
@@ -389,6 +393,9 @@ class BaseDroneController(gym.Env):
 
         spawn_pos = [self.launch_pad_position[0], self.launch_pad_position[1], self.launch_pad_position[2] + 0.2]
         self.drone.loadDrone(start_pos=spawn_pos)
+        self.drone.action_buffer.clear()
+        for _ in range(self.drone.ACTION_BUFFER_SIZE):
+            self.drone.action_buffer.append(np.zeros(4, dtype=np.float32))
         self.drone.resetDrone()
         # ------ landing_pad ------#
         self.drone.setLandingPadPosition(self.landing_pad_position)
@@ -523,8 +530,8 @@ class BaseDroneController(gym.Env):
         self._p.applyExternalForce(self.drone.getDroneID(), -1, forceObj=F_drag, posObj=[px, py, pz], flags=self._p.WORLD_FRAME)
 
         # ---- Only printing at certain steps to not spam console ----#
-        if self.pyb_step_counter % 240 == 0:
-            print(f"|F|={np.linalg.norm(F_drag):.3f} N  " f"level={self.current_wind_level}")
+        # if self.pyb_step_counter % 240 == 0:
+        #     print(f"|F|={np.linalg.norm(F_drag):.3f} N  " f"level={self.current_wind_level}")
 
     def _getObservation(self):
         """
@@ -607,13 +614,16 @@ class BaseDroneController(gym.Env):
         lidar_orientation = list(self._p.getEulerFromQuaternion(lidar_position[1]))
 
         lidar_hits = lidar.CheckHits(
-            ray_from_position,
-            lidar_orientation,
-            self.LIDAR_MAX_DISTANCE,
-            self.OFFSET,
-            self.landing_pad,
-            self.plane,
+            ray_from_position=ray_from_position,
+            ray_orientation=lidar_orientation,
+            ray_length=self.LIDAR_MAX_DISTANCE,
+            offset=self.OFFSET,
+            landing_pad_id=self.landing_pad,
+            launch_pad_id=self.launch_pad,
+            plane=self.plane,
             draw_debug_line=self.debug_axes,
+            pyb_client=self._p,
+            drone_id=self.drone.getDroneID(),
         )
 
         return lidar_hits
@@ -731,21 +741,15 @@ class BaseDroneController(gym.Env):
         """Enable or diable wind effects."""
         self._wind_effect_active = flag
 
-    def setStaticBlocks(self, flag: bool):
-        """Enable or disable static blocks."""
-        self._static_blocks_active = flag
+    def enableWind(self, flag: bool):
+        self.enable_wind = flag
 
     def setTreesFlag(self, flag: bool):
         """Enable or disable trees."""
         self._trees_active = flag
 
-    def setDonutObstacles(self, flag: bool):
-        """Enable or disable donut obstacles."""
-        self._donut_obstacles_active = flag
-
-    def setMovingBlocks(self, flag: bool):
-        """Enable or disable moving blocks."""
-        self._moving_blocks_active = flag
+    def enableLidarPenalty(self, flag: bool):
+        self.lidar_added = flag
 
     def close(self):
         if hasattr(self, "_p"):
