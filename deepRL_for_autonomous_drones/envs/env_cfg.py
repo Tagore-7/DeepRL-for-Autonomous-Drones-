@@ -23,7 +23,8 @@ class EnvCfg:
     observation_type: int = 2
 
     use_dyn_landing_pad: bool = True
-    use_dyn_trees: bool = True
+    enable_dynamic_tree_sizing: bool = False
+    use_dyn_trees: bool = True  # For using the seed layout pool
 
     # ------- Seed / layout_pool -------#
     use_layout_pool: bool = True

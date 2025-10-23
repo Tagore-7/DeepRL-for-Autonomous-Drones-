@@ -12,8 +12,8 @@ from collections import OrderedDict
 
 
 class DroneControllerRPM(BaseDroneController):
-    def __init__(self, render_mode=None, graphics=False):
-        super().__init__(render_mode=render_mode, graphics=graphics)
+    def __init__(self, render_mode=None, graphics=False, task_type="Original"):
+        super().__init__(render_mode=render_mode, graphics=graphics, task_type=task_type)
         self.reward_function = self.args.reward_function
         self.cost_function = self.args.cost_function
 
@@ -96,7 +96,7 @@ class DroneControllerRPM(BaseDroneController):
             self.observation_space = Dict(
                 {
                     "state": state_space,
-                    "lidar": Box(low=lidar_low, high=lidar_high, dtype=np.float32),
+                    "lidar": Box(low=lidar_low, high=lidar_high, shape=(lidar_dim,), dtype=np.float32),
                 }
             )
         # ---- Kin+RGB ----#
@@ -112,7 +112,7 @@ class DroneControllerRPM(BaseDroneController):
             self.observation_space = Dict(
                 {
                     "state": state_space,
-                    "lidar": Box(low=lidar_low, high=lidar_high, dtype=np.float32),
+                    "lidar": Box(low=lidar_low, high=lidar_high, shape=(lidar_dim,), dtype=np.float32),
                     "rgb": Box(low=0, high=255, shape=self.rgb_obs_shape, dtype=np.uint8),
                 }
             )
@@ -205,6 +205,12 @@ class DroneControllerRPM(BaseDroneController):
         terminated = self._computeTerminated()
         truncated = self._computeTruncated()
         truncated = self.afterStep(truncated)
+        landed = False
+        if terminated:
+            landed = True
+        info["landed"] = landed
+        info["hard_landing"] = self.hard_landing
+        # info["task_achieved"] = self.task_achieved
 
         return observation, reward, terminated, truncated, info
 

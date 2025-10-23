@@ -57,10 +57,11 @@ with RedirectStream(sys.stderr):
 class BaseDroneController(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
 
-    def __init__(self, render_mode=None, graphics=False):
+    def __init__(self, render_mode=None, graphics=False, task_type="Original"):
         self.args = EnvCfg
         self.render_mode = render_mode
         self.use_graphics = graphics or (render_mode == "human")
+        self.task_type = task_type
         # self._init_logger(rank=self.worker_id if hasattr(self, "worker_id") else None)
         # self.logger.info("Initialized logger for this environment.")
 
@@ -89,7 +90,7 @@ class BaseDroneController(gym.Env):
 
         # ---- Initialize curriculum-related flags (all start as OFF) ----#
         self._obstacles_active = False
-        self._wind_effect_active = True
+        self._wind_effect_active = False
         self._trees_active = True
 
         # ------- Seed / layout_pool -------#
@@ -137,6 +138,7 @@ class BaseDroneController(gym.Env):
         self.EPISODE_LEN_SEC = 20
         self.CTRL_STEPS = self.EPISODE_LEN_SEC * self.CTRL_FREQ
         self.WIND_DELAY_STEPS = 20
+        self.max_episode_steps = self.CTRL_STEPS
 
         # ---- LIDAR settings ----#
         self.LIDAR_NUM_RAYS = 144  # Number of LIDAR rays
@@ -345,7 +347,8 @@ class BaseDroneController(gym.Env):
         info = {}
 
         # ---- After reset ----#
-        self.after_reset()
+        if self.task_type == "Original":
+            self.after_reset()
 
         return obs, info
 
@@ -358,6 +361,7 @@ class BaseDroneController(gym.Env):
         self.landed = False
         self.hard_landing = False
         self.crashed = False
+        self.task_achieved = False
         self.step_counter = 0  # Step counter for termination condition
         self.c = 0.0  # Hyperparameter indicating landing state bonus
         self.previous_shaping = None  # Previous shaping reward for temporal difference shaping
@@ -369,13 +373,11 @@ class BaseDroneController(gym.Env):
         self._p.setGravity(0, 0, self.gravity)
         self._p.setTimeStep(self.PYB_TIMESTEP)
 
-        # ------ landing_pad ------#
         self._add_origin_marker(height=2.0, radius=0.03)
 
         # ---- Load ground plane, drone, launch pad, and obstacles models ----#
         self.plane = self._p.loadURDF("plane.urdf")
 
-        # ------ landing_pad ------#
         if self.args.use_dyn_landing_pad:
             self.landing_pad_position = self._sample_landing_pad_spawn()
         self.landing_pad = self._p.loadURDF(
@@ -400,8 +402,8 @@ class BaseDroneController(gym.Env):
         # ------ landing_pad ------#
         self.drone.setLandingPadPosition(self.landing_pad_position)
 
-        # ---- Load obstacles if active ----#
-        if self.add_obstacles:
+        # ---- Load obstacles if active. No need to double load if performing the obstacle subtask ----#
+        if self.add_obstacles and self.task_type != "Obstacle":
             if self.args.use_dyn_trees:
                 self._generateStaticTrees(self._current_layout_seed)
             else:
@@ -726,16 +728,23 @@ class BaseDroneController(gym.Env):
         self.fixed_tree_positions = positions
 
         # -------------------------- Spawn trees ----------------------------
-        tree_options = [
-            # "assets/tree_one.urdf",
-            # "assets/tree_two.urdf",
-            # "assets/tree_three.urdf",
-            # "assets/tree_four.urdf",
-            # "assets/tree_five.urdf",
-            "assets/tree_dynamic.urdf"
-        ]
+        if self.args.enable_dynamic_tree_sizing:
+            tree_options = [
+                "assets/tree_dynamic.urdf",
+                "assets/tree_cylinder_dynamic.urdf",
+            ]
+        else:
+            tree_options = [
+                "assets/tree_one.urdf",
+                "assets/tree_two.urdf",
+                "assets/tree_three.urdf",
+                "assets/tree_four.urdf",
+                "assets/tree_five.urdf",
+            ]
         self.fixed_tree_types = [tree_options[int(rng.integers(0, len(tree_options)))] for _ in positions]
-        self.trees = generateStaticTrees(self.fixed_tree_positions, self.fixed_tree_types, self._p)
+        self.trees = generateStaticTrees(
+            self.fixed_tree_positions, self.fixed_tree_types, self._p, dynamic_tree_sizing=self.args.enable_dynamic_tree_sizing
+        )
 
     def setWindEffects(self, flag: bool):
         """Enable or diable wind effects."""
